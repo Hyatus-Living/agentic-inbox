@@ -196,8 +196,8 @@ export default function EmailPanel({ emailId }: { emailId: string }) {
 								isSending={isDraft ? isSending : false}
 								isExpanded={expandedMessages.has(msg.id)}
 								onToggleExpand={() => toggleExpand(msg.id)}
-								onSendDraft={isDraft ? () => handleSendDraft(msg) : undefined}
-								onEditDraft={isDraft ? () => handleEditDraft(msg) : undefined}
+								onSendDraft={undefined}
+								onEditDraft={undefined}
 								onDeleteDraft={isDraft ? () => handleDeleteDraft(msg) : undefined}
 								onViewSource={() => setSourceViewEmail(msg)}
 								onPreviewImage={(url, filename) =>

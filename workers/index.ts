@@ -6,20 +6,19 @@ import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
 import PostalMime from "postal-mime";
 import { z } from "zod";
-import { sendEmail } from "./email-sender";
 import { storeAttachments, type StoredAttachment } from "./lib/attachments";
 import {
-	validateSender,
-	SenderValidationError,
-	generateMessageId,
-	buildThreadingHeaders,
 	listMailboxes,
 } from "./lib/email-helpers";
-import { SendEmailRequestSchema } from "./lib/schemas";
-import { handleReplyEmail, handleForwardEmail } from "./routes/reply-forward";
 import { Folders } from "../shared/folders";
 import type { Env } from "./types";
 import { requireMailbox, type MailboxContext } from "./lib/mailbox";
+import {
+	defaultMailboxSettings,
+	getConfiguredEmailAddresses,
+	isAutoDraftEnabled,
+	isInboundOnly,
+} from "./lib/config";
 
 type AppContext = Context<MailboxContext>;
 
@@ -43,6 +42,10 @@ const DraftBody = z.object({
 });
 
 // -- Helpers --------------------------------------------------------
+
+function outboundDisabled(c: AppContext) {
+	return c.json({ error: "Outbound email is disabled for this inbound-only Hyatus deployment." }, 403);
+}
 
 function slugify(text: string) { // can return "" for non-alphanumeric input
 	return text.toString().toLowerCase()
@@ -88,8 +91,13 @@ app.use("/api/v1/mailboxes/:mailboxId/*", requireMailbox);
 app.get("/api/v1/config", (c) => {
 	const domainsRaw = c.env.DOMAINS || "";
 	const domains = domainsRaw.split(",").map((d) => d.trim()).filter(Boolean);
-	const emailAddresses = c.env.EMAIL_ADDRESSES ?? [];
-	return c.json({ domains, emailAddresses });
+	const emailAddresses = getConfiguredEmailAddresses(c.env);
+	return c.json({
+		domains,
+		emailAddresses,
+		inboundOnly: isInboundOnly(c.env),
+		autoDraftEnabled: isAutoDraftEnabled(c.env),
+	});
 });
 
 // -- Mailboxes ------------------------------------------------------
@@ -102,14 +110,13 @@ app.get("/api/v1/mailboxes", async (c) => {
 app.post("/api/v1/mailboxes", async (c) => {
 	const { name, settings, email: rawEmail } = CreateMailboxBody.parse(await c.req.json());
 	const email = rawEmail.toLowerCase();
-	const allowedAddresses = (c.env.EMAIL_ADDRESSES ?? []) as string[];
+	const allowedAddresses = getConfiguredEmailAddresses(c.env);
 	if (allowedAddresses.length > 0 && !allowedAddresses.map((a) => a.toLowerCase()).includes(email)) {
 		return c.json({ error: "Mailbox creation is restricted to configured EMAIL_ADDRESSES" }, 403);
 	}
 	const key = `mailboxes/${email}.json`;
 	if (await c.env.BUCKET.head(key)) return c.json({ error: "Mailbox already exists" }, 409);
-	const defaultSettings = { fromName: name, forwarding: { enabled: false, email: "" }, signature: { enabled: false, text: "" }, autoReply: { enabled: false, subject: "", message: "" } };
-	const finalSettings = { ...defaultSettings, ...settings };
+	const finalSettings = { ...defaultMailboxSettings(email), fromName: name, ...settings };
 	await c.env.BUCKET.put(key, JSON.stringify(finalSettings));
 	const stub = c.env.MAILBOX.get(c.env.MAILBOX.idFromName(email));
 	await stub.getFolders();
@@ -166,49 +173,7 @@ app.get("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 });
 
 app.post("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
-	const mailboxId = c.req.param("mailboxId")!;
-	const body = SendEmailRequestSchema.parse(await c.req.json());
-	const { to, cc, bcc, from, subject, html, text, attachments, in_reply_to, references, thread_id } = body;
-
-	let toStr: string, fromEmail: string, fromDomain: string;
-	try {
-		({ toStr, fromEmail, fromDomain } = validateSender(to, from, mailboxId));
-	} catch (e) {
-		if (e instanceof SenderValidationError) return c.json({ error: e.message }, 400);
-		throw e;
-	}
-
-	const { messageId, outgoingMessageId } = generateMessageId(fromDomain);
-	const stub = c.var.mailboxStub;
-	const rateLimitError = await (stub as any).checkSendRateLimit();
-	if (rateLimitError) return c.json({ error: rateLimitError }, 429);
-	const attachmentData = await storeAttachments(c.env.BUCKET, messageId, attachments);
-
-	await stub.createEmail(Folders.SENT, {
-		id: messageId, subject, sender: fromEmail, recipient: toStr,
-		cc: cc ? (Array.isArray(cc) ? cc.join(", ") : cc).toLowerCase() : null,
-		bcc: bcc ? (Array.isArray(bcc) ? bcc.join(", ") : bcc).toLowerCase() : null,
-		date: new Date().toISOString(), body: html || text || "",
-		in_reply_to: in_reply_to || null, email_references: references ? JSON.stringify(references) : null,
-		thread_id: thread_id || in_reply_to || messageId, message_id: outgoingMessageId,
-		raw_headers: JSON.stringify([
-			{ key: "from", value: typeof from === "string" ? from : `${from.name} <${from.email}>` },
-			{ key: "to", value: Array.isArray(to) ? to.join(", ") : to },
-			...(cc ? [{ key: "cc", value: Array.isArray(cc) ? cc.join(", ") : cc }] : []),
-			...(bcc ? [{ key: "bcc", value: Array.isArray(bcc) ? bcc.join(", ") : bcc }] : []),
-			{ key: "subject", value: subject }, { key: "date", value: new Date().toISOString() },
-			{ key: "message-id", value: `<${outgoingMessageId}>` },
-		]),
-	}, attachmentData);
-
-	c.executionCtx.waitUntil(
-		sendEmail(c.env.EMAIL, {
-			to, cc, bcc, from, subject, html, text,
-			attachments: attachments?.map((att) => ({ content: att.content, filename: att.filename, type: att.type, disposition: att.disposition || "attachment", contentId: att.contentId })),
-			...(in_reply_to ? { headers: buildThreadingHeaders(in_reply_to, references || []) } : {}),
-		}).catch((e) => console.error("Deferred email delivery failed:", (e as Error).message)),
-	);
-	return c.json({ id: messageId, status: "sent" }, 202);
+	return outboundDisabled(c);
 });
 
 app.post("/api/v1/mailboxes/:mailboxId/drafts", async (c: AppContext) => {
@@ -268,8 +233,8 @@ app.post("/api/v1/mailboxes/:mailboxId/threads/:threadId/read", async (c: AppCon
 
 // -- Reply / Forward ------------------------------------------------
 
-app.post("/api/v1/mailboxes/:mailboxId/emails/:id/reply", handleReplyEmail);
-app.post("/api/v1/mailboxes/:mailboxId/emails/:id/forward", handleForwardEmail);
+app.post("/api/v1/mailboxes/:mailboxId/emails/:id/reply", outboundDisabled);
+app.post("/api/v1/mailboxes/:mailboxId/emails/:id/forward", outboundDisabled);
 
 // -- Folders --------------------------------------------------------
 
@@ -351,7 +316,7 @@ async function receiveEmail(event: { raw: ReadableStream; rawSize: number }, env
 
 	if (!parsedEmail.to?.length || !parsedEmail.to[0].address) throw new Error("received email with empty to");
 
-	const allowedAddresses = ((env.EMAIL_ADDRESSES ?? []) as string[]).map((a) => a.toLowerCase());
+	const allowedAddresses = getConfiguredEmailAddresses(env);
 	const allRecipients = parsedEmail.to.map((t) => t.address?.toLowerCase()).filter(Boolean) as string[];
 	const ccRecipients = (parsedEmail.cc || []).map((e) => e.address?.toLowerCase()).filter(Boolean) as string[];
 	const bccRecipients = (parsedEmail.bcc || []).map((e) => e.address?.toLowerCase()).filter(Boolean) as string[];
@@ -364,7 +329,14 @@ async function receiveEmail(event: { raw: ReadableStream; rawSize: number }, env
 	if (!mailboxId) throw new Error("received email with no valid recipient address");
 
 	const messageId = crypto.randomUUID();
-	if (!(await env.BUCKET.head(`mailboxes/${mailboxId}.json`))) { console.log(`Ignoring email for ${mailboxId}: mailbox does not exist`); return; }
+	const mailboxKey = `mailboxes/${mailboxId}.json`;
+	if (!(await env.BUCKET.head(mailboxKey))) {
+		if (!allowedAddresses.includes(mailboxId)) { console.log(`Ignoring email for ${mailboxId}: mailbox does not exist`); return; }
+		await env.BUCKET.put(mailboxKey, JSON.stringify(defaultMailboxSettings(mailboxId)));
+		const initStub = env.MAILBOX.get(env.MAILBOX.idFromName(mailboxId));
+		await initStub.getFolders();
+		console.log(`Auto-created configured mailbox ${mailboxId}`);
+	}
 
 	const stub = env.MAILBOX.get(env.MAILBOX.idFromName(mailboxId));
 
@@ -402,11 +374,13 @@ async function receiveEmail(event: { raw: ReadableStream; rawSize: number }, env
 		thread_id: threadId, message_id: originalMessageId, raw_headers: JSON.stringify(parsedEmail.headers),
 	}, attachmentData);
 
-	const agentStub = env.EMAIL_AGENT.get(env.EMAIL_AGENT.idFromName(mailboxId));
-	ctx.waitUntil(agentStub.fetch(new Request("https://agents/onNewEmail", {
-		method: "POST", headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ mailboxId, emailId: messageId, sender: (parsedEmail.from?.address || "").toLowerCase(), subject: parsedEmail.subject || "", threadId }),
-	})).catch((e) => console.error("Auto-draft trigger failed:", (e as Error).message)));
+	if (isAutoDraftEnabled(env)) {
+		const agentStub = env.EMAIL_AGENT.get(env.EMAIL_AGENT.idFromName(mailboxId));
+		ctx.waitUntil(agentStub.fetch(new Request("https://agents/onNewEmail", {
+			method: "POST", headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ mailboxId, emailId: messageId, sender: (parsedEmail.from?.address || "").toLowerCase(), subject: parsedEmail.subject || "", threadId }),
+		})).catch((e) => console.error("Auto-draft trigger failed:", (e as Error).message)));
+	}
 }
 
 export { app, receiveEmail };

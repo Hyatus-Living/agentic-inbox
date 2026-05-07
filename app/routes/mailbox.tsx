@@ -5,7 +5,6 @@
 import { useEffect, useRef } from "react";
 import { Outlet, useParams } from "react-router";
 import AgentSidebar from "~/components/AgentSidebar";
-import ComposeEmail from "~/components/ComposeEmail";
 import Header from "~/components/Header";
 import Sidebar from "~/components/Sidebar";
 import { useMailbox } from "~/queries/mailboxes";
@@ -75,8 +74,6 @@ export default function MailboxRoute() {
 					<AgentSidebar />
 				</div>
 			)}
-
-			<ComposeEmail />
 		</div>
 	);
 }

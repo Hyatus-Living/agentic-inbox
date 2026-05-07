@@ -13,8 +13,6 @@ import {
 	EnvelopeOpenIcon,
 	EnvelopeSimpleIcon,
 	FolderSimpleIcon,
-	PaperPlaneTiltIcon,
-	PencilSimpleIcon,
 	StarIcon,
 	TrashIcon,
 	XIcon,
@@ -59,6 +57,8 @@ export default function EmailPanelToolbar({
 	onViewSource,
 	onDelete,
 }: EmailPanelToolbarProps) {
+	const showOutboundActions = false;
+
 	return (
 		<div className="flex items-center gap-1 px-3 py-2 border-b border-kumo-line shrink-0 md:px-4">
 			<Button
@@ -71,25 +71,8 @@ export default function EmailPanelToolbar({
 				className="md:hidden shrink-0"
 			/>
 
-			{isDraftFolder ? (
+			{showOutboundActions && (isDraftFolder ? (
 				<>
-					<Button
-						variant="primary"
-						size="sm"
-						icon={<PaperPlaneTiltIcon size={16} />}
-						onClick={onSendDraft}
-						loading={isSending}
-					>
-						{isSending ? "Sending..." : "Send"}
-					</Button>
-					<Button
-						variant="secondary"
-						size="sm"
-						icon={<PencilSimpleIcon size={16} />}
-						onClick={onEditDraft}
-					>
-						Edit
-					</Button>
 				</>
 			) : (
 				<>
@@ -124,9 +107,9 @@ export default function EmailPanelToolbar({
 						/>
 					</Tooltip>
 				</>
-			)}
+			))}
 
-			<div className="h-5 w-px bg-kumo-fill mx-0.5" />
+			{showOutboundActions && <div className="h-5 w-px bg-kumo-fill mx-0.5" />}
 
 			<Tooltip content={email.starred ? "Unstar" : "Star"} side="bottom" asChild>
 				<Button
