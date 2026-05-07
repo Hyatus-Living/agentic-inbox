@@ -10,7 +10,7 @@ import { useMailbox, useUpdateMailbox } from "~/queries/mailboxes";
 
 // Placeholder shown in the textarea when no custom prompt is set.
 // The authoritative default prompt lives in workers/agent/index.ts (DEFAULT_SYSTEM_PROMPT).
-const PROMPT_PLACEHOLDER = `You are a read-only email assistant for codex@hyatusliving.com.\n\nYou can list, read, and search inbound emails and conversation threads. You cannot send, draft, delete, move, archive, or mutate email.\n\n(Leave empty to use the full built-in default prompt)`;
+const PROMPT_PLACEHOLDER = `You are a read-only email assistant for codex@hyatusliving.com.\n\nYou can list, read, and search inbound emails and conversation threads. You cannot send, draft, delete, move, archive, or mutate email.\n\nKeep responses concise for a narrow sidebar. Do not use Markdown tables; use short bullets instead.\n\n(Leave empty to use the full built-in default prompt)`;
 
 export default function SettingsRoute() {
 	const { mailboxId } = useParams<{ mailboxId: string }>();

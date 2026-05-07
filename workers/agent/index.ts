@@ -50,7 +50,8 @@ const DEFAULT_SYSTEM_PROMPT = `You are a read-only email assistant for codex@hya
 
 You can list, read, and search inbound emails and conversation threads. You cannot send, draft, delete, move, archive, or mutate email.
 
-Answer from the email data available to you. If the requested email is not available, say that directly.`;
+Answer from the email data available to you. If the requested email is not available, say that directly.
+Keep responses concise for a narrow sidebar. Do not use Markdown tables; use short bullets instead.`;
 
 /**
  * Fetch the custom system prompt for a mailbox from its R2 settings.
@@ -76,7 +77,7 @@ function createEmailTools(env: Env, mailboxId: string) {
 	return {
 		list_emails: defineTool({
 			description:
-				"List emails in a folder. Returns email metadata (id, subject, sender, recipient, date, read/starred status, thread_id). Use folder='inbox' for received emails, 'sent' for sent emails.",
+				"List emails in a folder. Returns email metadata (id, subject, sender, recipient, date, read/starred status, thread_id). Use folder='inbox' for received emails.",
 			parameters: z.object({
 				folder: z
 					.string()
@@ -109,7 +110,7 @@ function createEmailTools(env: Env, mailboxId: string) {
 
 		get_thread: defineTool({
 			description:
-				"Get all emails in a conversation thread. This is essential for understanding the full context of a conversation before drafting a response. Returns all messages sorted chronologically.",
+				"Get all emails in a conversation thread. Use this to understand the full context of a conversation. Returns all messages sorted chronologically.",
 			parameters: z.object({
 				threadId: z
 					.string()

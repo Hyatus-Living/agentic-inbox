@@ -22,8 +22,8 @@ export function isInboundOnly(env: { INBOUND_ONLY?: string }) {
 	return env.INBOUND_ONLY !== "false";
 }
 
-export function isAutoDraftEnabled(env: { AUTO_DRAFT_ENABLED?: string }) {
-	return env.AUTO_DRAFT_ENABLED === "true";
+export function isAutoDraftEnabled(env: { AUTO_DRAFT_ENABLED?: string; INBOUND_ONLY?: string }) {
+	return !isInboundOnly(env) && env.AUTO_DRAFT_ENABLED === "true";
 }
 
 export function defaultMailboxSettings(email: string) {

@@ -10,19 +10,16 @@ import {
 	UserIcon,
 	EnvelopeSimpleIcon,
 	MagnifyingGlassIcon,
-	PaperPlaneTiltIcon,
 	EyeIcon,
 	ArrowBendUpLeftIcon,
 	WrenchIcon,
 	CheckCircleIcon,
 	StopIcon,
-	PencilSimpleIcon,
 } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { useUIStore } from "~/hooks/useUIStore";
 import type { UIMessage } from "ai";
 
 const TOOL_LABELS: Record<string, { label: string; icon: React.ReactNode }> = {
@@ -41,18 +38,6 @@ const TOOL_LABELS: Record<string, { label: string; icon: React.ReactNode }> = {
 	search_emails: {
 		label: "Searching",
 		icon: <MagnifyingGlassIcon size={14} weight="bold" />,
-	},
-	draft_email: {
-		label: "Drafting email",
-		icon: <PaperPlaneTiltIcon size={14} weight="bold" />,
-	},
-	draft_reply: {
-		label: "Drafting reply",
-		icon: <PaperPlaneTiltIcon size={14} weight="bold" />,
-	},
-	discard_draft: {
-		label: "Discarding draft",
-		icon: <TrashIcon size={14} weight="bold" />,
 	},
 	mark_email_read: {
 		label: "Updating status",
@@ -103,43 +88,10 @@ function getToolNameFromPart(part: UIMessage["parts"][number]): string | null {
 	return null;
 }
 
-function hasDraftReplyTool(message: UIMessage): boolean {
-	return message.parts.some((part) => {
-		const toolName = getToolNameFromPart(part);
-		return toolName === "draft_reply";
-	});
-}
-
-function DraftActions({
-	onEdit,
-	disabled,
-}: {
-	onEdit: () => void;
-	disabled: boolean;
-}) {
-	return (
-		<div className="flex gap-1.5 mt-1">
-			<Button
-				variant="primary"
-				size="sm"
-				icon={<PencilSimpleIcon size={14} />}
-				onClick={onEdit}
-				disabled={disabled}
-			>
-				Edit & send in composer
-			</Button>
-		</div>
-	);
-}
-
 function MessageBubble({
 	message,
-	onAction,
-	isStreaming,
 }: {
 	message: UIMessage;
-	onAction?: (action: string) => void;
-	isStreaming: boolean;
 }) {
 	const isUser = message.role === "user";
 
@@ -281,13 +233,6 @@ function MessageBubble({
 					}
 					return null;
 				})}
-				{/* Show action buttons for draft replies */}
-				{!isUser && hasDraftReplyTool(message) && onAction && (
-					<DraftActions
-						onEdit={() => onAction("edit")}
-						disabled={isStreaming}
-					/>
-				)}
 			</div>
 		</div>
 	);
@@ -305,7 +250,6 @@ function AgentChatConnected({
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const inputRef = useRef<HTMLTextAreaElement>(null);
 	const [inputValue, setInputValue] = useState("");
-	const { startCompose } = useUIStore();
 
 	const agent = useAgent({ agent: "EmailAgent", name: mailboxId });
 	const { messages, sendMessage, status, setMessages, stop } =
@@ -339,7 +283,7 @@ function AgentChatConnected({
 	const suggestedPrompts = [
 		"Show me the latest inbox emails",
 		"Any unread emails?",
-		"Draft a response to the latest email",
+		"Search for routing verification",
 	];
 
 	return (
@@ -385,8 +329,8 @@ function AgentChatConnected({
 							/>
 						</div>
 						<p className="text-xs text-kumo-subtle text-center leading-relaxed px-4">
-							I can read emails, search conversations, and draft
-							replies.
+							I can read emails, search conversations, and load
+							threads from this inbound inbox.
 						</p>
 						<div className="flex flex-col gap-1.5 w-full">
 							{suggestedPrompts.map((prompt) => (
@@ -409,48 +353,6 @@ function AgentChatConnected({
 							<MessageBubble
 								key={msg.id}
 								message={msg}
-								isStreaming={isStreaming}
-							onAction={(action) => {
-								if (action === "edit") {
-										// Extract draft data from the draft_reply tool result
-										let draftData: {
-											to?: string;
-											subject?: string;
-											body?: string;
-											id?: string;
-										} | null = null;
-										for (const part of msg.parts) {
-											if (
-												(part as any).toolName === "draft_reply" &&
-												(part as any).result
-											) {
-												draftData = (part as any).result;
-												break;
-											}
-										}
-										if (draftData) {
-											const draftEmail = {
-												id: draftData.id || "",
-												subject: draftData.subject || "",
-												sender: mailboxId,
-												recipient: draftData.to || "",
-												date: new Date().toISOString(),
-												read: true,
-												starred: false,
-												body: draftData.body || "",
-											};
-											startCompose({
-												mode: "reply",
-												originalEmail: null,
-												draftEmail,
-											});
-										} else {
-											sendMessage({
-												text: "Let me edit this draft first. Show me what you have so I can modify it.",
-											});
-										}
-									}
-								}}
 							/>
 						))}
 						{isStreaming && (
