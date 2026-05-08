@@ -12,6 +12,12 @@ import {
 	toolGetThread,
 	toolSearchEmails,
 } from "../lib/tools";
+import {
+	canAccessMailbox,
+	filterVisibleMailboxes,
+	principalFromProps,
+	type AuthPrincipal,
+} from "../lib/authz";
 import { Folders, FOLDER_TOOL_DESCRIPTION } from "../../shared/folders";
 import type { Env } from "../types";
 
@@ -38,7 +44,11 @@ function mcpError(message: string) {
  * Clients (ProtoAgent, Claude Code, Cursor, etc.) connect to the
  * `/mcp` endpoint and can list mailboxes and read/search emails.
  */
-export class EmailMCP extends McpAgent<Env> {
+interface EmailMCPProps extends Record<string, unknown> {
+	principal?: AuthPrincipal;
+}
+
+export class EmailMCP extends McpAgent<Env, unknown, EmailMCPProps> {
 	server = new McpServer({
 		name: "agentic-inbox",
 		version: "1.0.0",
@@ -46,15 +56,23 @@ export class EmailMCP extends McpAgent<Env> {
 
 	async init() {
 		const env = this.env;
+		const principal = principalFromProps(this.props?.principal);
 
 		/**
 		 * Verify a mailbox exists in R2 before operating on it.
 		 * Returns an MCP error response if the mailbox is not found, or null if valid.
 		 */
 		const verifyMailbox = async (mailboxId: string) => {
+			if (!principal) {
+				return mcpError("Cloudflare Access principal is required.");
+			}
 			const obj = await env.BUCKET.head(`mailboxes/${mailboxId}.json`);
 			if (!obj) {
 				return mcpError(`Mailbox "${mailboxId}" not found. Use list_mailboxes to see available mailboxes.`);
+			}
+			const allowed = await canAccessMailbox(env, principal, mailboxId);
+			if (!allowed) {
+				return mcpError(`Not authorized for mailbox "${mailboxId}".`);
 			}
 			return null;
 		};
@@ -66,7 +84,8 @@ export class EmailMCP extends McpAgent<Env> {
 			{},
 			async () => {
 				const result = await toolListMailboxes(env);
-				return mcpText(result);
+				const visibleMailboxes = await filterVisibleMailboxes(env, principal, result);
+				return mcpText(visibleMailboxes);
 			},
 		);
 

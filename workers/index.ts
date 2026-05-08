@@ -14,6 +14,14 @@ import { Folders } from "../shared/folders";
 import type { Env } from "./types";
 import { requireMailbox, type MailboxContext } from "./lib/mailbox";
 import {
+	filterVisibleMailboxes,
+	getAuthzStub,
+	isSuperAdmin,
+	type AuthPrincipal,
+	type GrantRole,
+	type PrincipalType,
+} from "./lib/authz";
+import {
 	defaultMailboxSettings,
 	getConfiguredEmailAddresses,
 	isAutoDraftEnabled,
@@ -41,10 +49,50 @@ const DraftBody = z.object({
 	draft_id: z.string().optional(),
 });
 
+const GrantBody = z.object({
+	principalType: z.enum(["human", "service_token"]),
+	principalId: z.string().min(1),
+	role: z.enum(["viewer", "service_agent"]).optional(),
+	label: z.string().optional(),
+});
+
 // -- Helpers --------------------------------------------------------
 
 function outboundDisabled(c: AppContext) {
 	return c.json({ error: "Outbound email is disabled for this inbound-only Hyatus deployment." }, 403);
+}
+
+function currentPrincipal(c: AppContext): AuthPrincipal {
+	const principal = c.var.principal;
+	if (!principal) throw new Error("Cloudflare Access principal missing");
+	return principal;
+}
+
+function currentUserIsSuperAdmin(c: AppContext) {
+	return isSuperAdmin(c.env, currentPrincipal(c));
+}
+
+function requireSuperAdmin(c: AppContext) {
+	if (!currentUserIsSuperAdmin(c)) return c.json({ error: "Super admin access required" }, 403);
+	return null;
+}
+
+function normalizeGrantInput(input: z.infer<typeof GrantBody>, mailboxId: string) {
+	const principalType = input.principalType as PrincipalType;
+	const principalId = principalType === "human"
+		? input.principalId.trim().toLowerCase()
+		: input.principalId.trim();
+	if (principalType === "human" && !principalId.endsWith("@hyatus.com")) {
+		throw new Error("Human grants must use a @hyatus.com Google Workspace account");
+	}
+	const role = (input.role ?? (principalType === "service_token" ? "service_agent" : "viewer")) as GrantRole;
+	return {
+		mailboxId: mailboxId.toLowerCase(),
+		principalType,
+		principalId,
+		role,
+		label: input.label?.trim() || undefined,
+	};
 }
 
 function slugify(text: string) { // can return "" for non-alphanumeric input
@@ -84,6 +132,7 @@ app.use("/api/*", cors({
 		return undefined;
 	},
 }));
+app.use("/api/v1/mailboxes/:mailboxId", requireMailbox);
 app.use("/api/v1/mailboxes/:mailboxId/*", requireMailbox);
 
 // -- Config ---------------------------------------------------------
@@ -92,22 +141,76 @@ app.get("/api/v1/config", (c) => {
 	const domainsRaw = c.env.DOMAINS || "";
 	const domains = domainsRaw.split(",").map((d) => d.trim()).filter(Boolean);
 	const emailAddresses = getConfiguredEmailAddresses(c.env);
+	const isAdmin = currentUserIsSuperAdmin(c);
 	return c.json({
 		domains,
-		emailAddresses,
+		emailAddresses: isAdmin ? emailAddresses : [],
 		inboundOnly: isInboundOnly(c.env),
 		autoDraftEnabled: isAutoDraftEnabled(c.env),
 	});
+});
+
+app.get("/api/v1/me", async (c) => {
+	const principal = currentPrincipal(c);
+	const allMailboxes = await listMailboxes(c.env.BUCKET);
+	const visibleMailboxes = await filterVisibleMailboxes(c.env, principal, allMailboxes.map((m) => ({ ...m, name: m.id })));
+	return c.json({
+		principal,
+		isSuperAdmin: isSuperAdmin(c.env, principal),
+		visibleMailboxes: visibleMailboxes.map((mailbox) => mailbox.id),
+	});
+});
+
+// -- Admin ----------------------------------------------------------
+
+app.use("/api/v1/admin/*", async (c, next) => {
+	const denied = requireSuperAdmin(c);
+	if (denied) return denied;
+	await next();
+});
+
+app.get("/api/v1/admin/principals", async (c) => {
+	return c.json(await getAuthzStub(c.env).listPrincipals());
+});
+
+app.get("/api/v1/admin/mailboxes/:mailboxId/grants", async (c) => {
+	const mailboxId = c.req.param("mailboxId")!.toLowerCase();
+	const mailbox = await c.env.BUCKET.head(`mailboxes/${mailboxId}.json`);
+	if (!mailbox) return c.json({ error: "Not found" }, 404);
+	return c.json(await getAuthzStub(c.env).listGrants(mailboxId));
+});
+
+app.put("/api/v1/admin/mailboxes/:mailboxId/grants", async (c) => {
+	const mailboxId = c.req.param("mailboxId")!.toLowerCase();
+	const mailbox = await c.env.BUCKET.head(`mailboxes/${mailboxId}.json`);
+	if (!mailbox) return c.json({ error: "Not found" }, 404);
+	const parsed = GrantBody.parse(await c.req.json());
+	if (parsed.principalType === "human" && !parsed.principalId.trim().toLowerCase().endsWith("@hyatus.com")) {
+		return c.json({ error: "Human grants must use a @hyatus.com Google Workspace account" }, 400);
+	}
+	const grant = normalizeGrantInput(parsed, mailboxId);
+	return c.json(await getAuthzStub(c.env).upsertGrant(grant));
+});
+
+app.delete("/api/v1/admin/mailboxes/:mailboxId/grants/:principalId", async (c) => {
+	const mailboxId = c.req.param("mailboxId")!.toLowerCase();
+	const principalId = decodeURIComponent(c.req.param("principalId")!);
+	const mailbox = await c.env.BUCKET.head(`mailboxes/${mailboxId}.json`);
+	if (!mailbox) return c.json({ error: "Not found" }, 404);
+	return c.json(await getAuthzStub(c.env).deleteGrant(mailboxId, principalId));
 });
 
 // -- Mailboxes ------------------------------------------------------
 
 app.get("/api/v1/mailboxes", async (c) => {
 	const allMailboxes = await listMailboxes(c.env.BUCKET);
-	return c.json(allMailboxes.map((m) => ({ ...m, name: m.id })));
+	const visibleMailboxes = await filterVisibleMailboxes(c.env, currentPrincipal(c), allMailboxes.map((m) => ({ ...m, name: m.id })));
+	return c.json(visibleMailboxes);
 });
 
 app.post("/api/v1/mailboxes", async (c) => {
+	const denied = requireSuperAdmin(c);
+	if (denied) return denied;
 	const { name, settings, email: rawEmail } = CreateMailboxBody.parse(await c.req.json());
 	const email = rawEmail.toLowerCase();
 	const allowedAddresses = getConfiguredEmailAddresses(c.env);
@@ -131,6 +234,8 @@ app.get("/api/v1/mailboxes/:mailboxId", async (c) => {
 });
 
 app.put("/api/v1/mailboxes/:mailboxId", async (c) => {
+	const denied = requireSuperAdmin(c);
+	if (denied) return denied;
 	const mailboxId = c.req.param("mailboxId")!;
 	const { settings } = (await c.req.json()) as { settings: Record<string, unknown> };
 	const key = `mailboxes/${mailboxId}.json`;
@@ -140,6 +245,8 @@ app.put("/api/v1/mailboxes/:mailboxId", async (c) => {
 });
 
 app.delete("/api/v1/mailboxes/:mailboxId", async (c) => {
+	const denied = requireSuperAdmin(c);
+	if (denied) return denied;
 	const mailboxId = c.req.param("mailboxId")!;
 	const key = `mailboxes/${mailboxId}.json`;
 	if (!(await c.env.BUCKET.head(key))) return c.json({ error: "Not found" }, 404);
@@ -208,6 +315,8 @@ app.put("/api/v1/mailboxes/:mailboxId/emails/:id", async (c: AppContext) => {
 });
 
 app.delete("/api/v1/mailboxes/:mailboxId/emails/:id", async (c: AppContext) => {
+	const denied = requireSuperAdmin(c);
+	if (denied) return denied;
 	const id = c.req.param("id")!;
 	const attachments = await c.var.mailboxStub.deleteEmail(id);
 	if (attachments === null) return c.json({ error: "Not found" }, 404);
@@ -216,6 +325,8 @@ app.delete("/api/v1/mailboxes/:mailboxId/emails/:id", async (c: AppContext) => {
 });
 
 app.post("/api/v1/mailboxes/:mailboxId/emails/:id/move", async (c: AppContext) => {
+	const denied = requireSuperAdmin(c);
+	if (denied) return denied;
 	const { folderId } = (await c.req.json()) as { folderId: string };
 	const success = await c.var.mailboxStub.moveEmail(c.req.param("id")!, folderId);
 	return success ? c.json({ status: "moved" }) : c.json({ error: "Folder not found" }, 400);
@@ -242,6 +353,8 @@ app.post("/api/v1/mailboxes/:mailboxId/emails/:id/forward", outboundDisabled);
 app.get("/api/v1/mailboxes/:mailboxId/folders", async (c: AppContext) => c.json(await c.var.mailboxStub.getFolders()));
 
 app.post("/api/v1/mailboxes/:mailboxId/folders", async (c: AppContext) => {
+	const denied = requireSuperAdmin(c);
+	if (denied) return denied;
 	const { name } = (await c.req.json()) as { name: string };
 	const slug = slugify(name);
 	if (!slug) return c.json({ error: "Folder name must contain alphanumeric characters" }, 400);
@@ -250,12 +363,16 @@ app.post("/api/v1/mailboxes/:mailboxId/folders", async (c: AppContext) => {
 });
 
 app.put("/api/v1/mailboxes/:mailboxId/folders/:id", async (c: AppContext) => {
+	const denied = requireSuperAdmin(c);
+	if (denied) return denied;
 	const { name } = (await c.req.json()) as { name: string };
 	const f = await c.var.mailboxStub.updateFolder(c.req.param("id")!, name);
 	return f ? c.json(f) : c.json({ error: "Folder not found" }, 404);
 });
 
 app.delete("/api/v1/mailboxes/:mailboxId/folders/:id", async (c: AppContext) => {
+	const denied = requireSuperAdmin(c);
+	if (denied) return denied;
 	const ok = await c.var.mailboxStub.deleteFolder(c.req.param("id")!);
 	return ok ? c.body(null, 204) : c.json({ error: "Folder not found or cannot be deleted" }, 400);
 });

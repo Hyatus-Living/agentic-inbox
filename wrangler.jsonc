@@ -23,7 +23,17 @@
 		"DOMAINS": "hyatusliving.com",
 		"EMAIL_ADDRESSES": ["codex@hyatusliving.com"],
 		"INBOUND_ONLY": "true",
-		"AUTO_DRAFT_ENABLED": "false"
+		"AUTO_DRAFT_ENABLED": "false",
+		"SUPER_ADMIN_EMAILS": ["michaelort@hyatus.com"],
+		"BOOTSTRAP_MAILBOX_GRANTS": [
+			{
+				"mailboxId": "codex@hyatusliving.com",
+				"principalType": "service_token",
+				"principalId": "687101efd9c5f56aff9fb7478c2d15da.access",
+				"role": "service_agent",
+				"label": "Codex agent service token"
+			}
+		]
 	},
 	"r2_buckets": [
 		{
@@ -48,6 +58,10 @@
 			{
 				"name": "EMAIL_MCP",
 				"class_name": "EmailMCP"
+			},
+			{
+				"name": "AUTHZ",
+				"class_name": "AuthzDO"
 			}
 		]
 	},
@@ -68,6 +82,12 @@
 			"tag": "v3",
 			"new_sqlite_classes": [
 				"EmailMCP"
+			]
+		},
+		{
+			"tag": "v4",
+			"new_sqlite_classes": [
+				"AuthzDO"
 			]
 		}
 	]

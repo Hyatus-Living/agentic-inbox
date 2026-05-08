@@ -10,11 +10,13 @@
 import { createMiddleware } from "hono/factory";
 import type { MailboxDO } from "../durableObject";
 import type { Env } from "../types";
+import { canAccessMailbox, type AuthPrincipal } from "./authz";
 
 export type MailboxContext = {
 	Bindings: Env;
 	Variables: {
 		mailboxStub: DurableObjectStub<MailboxDO>;
+		principal: AuthPrincipal;
 	};
 };
 
@@ -28,6 +30,11 @@ export const requireMailbox = createMiddleware<MailboxContext>(async (c, next) =
 	const obj = await c.env.BUCKET.head(key);
 	if (!obj) {
 		return c.json({ error: "Not found" }, 404);
+	}
+
+	const allowed = await canAccessMailbox(c.env, c.var.principal, mailboxId);
+	if (!allowed) {
+		return c.json({ error: "Not authorized for mailbox" }, 403);
 	}
 
 	// Instantiate DO stub

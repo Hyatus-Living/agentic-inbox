@@ -24,6 +24,7 @@ interface EmailPanelToolbarProps {
 	mailboxId?: string;
 	isDraftFolder: boolean;
 	isSending: boolean;
+	canManage: boolean;
 	moveToFolders: Folder[];
 	lastReceivedMessage?: Email;
 	onBack: () => void;
@@ -44,6 +45,7 @@ export default function EmailPanelToolbar({
 	mailboxId,
 	isDraftFolder,
 	isSending,
+	canManage,
 	moveToFolders,
 	onBack,
 	onSendDraft,
@@ -139,7 +141,7 @@ export default function EmailPanelToolbar({
 				/>
 			</Tooltip>
 
-			<MoveToFolderMenu folders={moveToFolders} onMove={onMove} />
+			{canManage && <MoveToFolderMenu folders={moveToFolders} onMove={onMove} />}
 
 			<div className="ml-auto flex items-center gap-0.5">
 				<Tooltip content="View source" side="bottom" asChild>
@@ -152,16 +154,18 @@ export default function EmailPanelToolbar({
 						aria-label="View source"
 					/>
 				</Tooltip>
-				<Tooltip content="Delete" side="bottom" asChild>
-					<Button
-						variant="ghost"
-						shape="square"
-						size="sm"
-						icon={<TrashIcon size={18} />}
-						onClick={onDelete}
-						aria-label="Delete"
-					/>
-				</Tooltip>
+				{canManage && (
+					<Tooltip content="Delete" side="bottom" asChild>
+						<Button
+							variant="ghost"
+							shape="square"
+							size="sm"
+							icon={<TrashIcon size={18} />}
+							onClick={onDelete}
+							aria-label="Delete"
+						/>
+					</Tooltip>
+				)}
 				<Tooltip content="Close" side="bottom" asChild>
 					<Button
 						variant="ghost"
