@@ -28,6 +28,7 @@ import {
 	getContentLabelRules,
 	isAutoDraftEnabled,
 	isInboundOnly,
+	type ContentLabelRule,
 } from "./lib/config";
 
 type AppContext = Context<MailboxContext>;
@@ -352,7 +353,10 @@ app.post("/api/v1/mailboxes/:mailboxId/emails/:id/forward", outboundDisabled);
 
 // -- Folders --------------------------------------------------------
 
-app.get("/api/v1/mailboxes/:mailboxId/folders", async (c: AppContext) => c.json(await c.var.mailboxStub.getFolders()));
+app.get("/api/v1/mailboxes/:mailboxId/folders", async (c: AppContext) => {
+	await ensureContentLabelFolders(c.var.mailboxStub, c.env, c.req.param("mailboxId")!.toLowerCase());
+	return c.json(await c.var.mailboxStub.getFolders());
+});
 
 app.post("/api/v1/mailboxes/:mailboxId/folders", async (c: AppContext) => {
 	const denied = requireSuperAdmin(c);
@@ -442,12 +446,25 @@ async function forwardMatchingContentRules(message: ForwardableEmailMessage, env
 	}
 }
 
-function findContentLabelFolder(env: Env, mailboxId: string, searchText: string) {
+function findContentLabelRule(env: Env, mailboxId: string, fromAddress: string, searchText: string) {
 	const rules = getContentLabelRules(env).filter((rule) => rule.mailboxId.toLowerCase() === mailboxId);
-	const rule = rules.find((rule) => new RegExp(rule.pattern, rule.flags ?? "i").test(searchText));
-	if (!rule) return Folders.INBOX;
-	console.log(`Labeling ${mailboxId} email by content rule ${rule.name} into folder ${rule.folderId}`);
-	return rule.folderId;
+	return rules.find((rule) => {
+		const flags = rule.flags ?? "i";
+		if (rule.fromPattern && !new RegExp(rule.fromPattern, flags).test(fromAddress)) return false;
+		return new RegExp(rule.pattern, flags).test(searchText);
+	});
+}
+
+async function ensureContentLabelFolders(stub: { createFolder: (id: string, name: string) => Promise<unknown> }, env: Env, mailboxId: string) {
+	const rules = getContentLabelRules(env).filter((rule) => rule.mailboxId.toLowerCase() === mailboxId);
+	for (const rule of rules) {
+		await stub.createFolder(rule.folderId, rule.folderName ?? rule.folderId);
+	}
+}
+
+async function ensureContentLabelFolder(stub: { createFolder: (id: string, name: string) => Promise<unknown> }, rule: ContentLabelRule | undefined) {
+	if (!rule) return;
+	await stub.createFolder(rule.folderId, rule.folderName ?? rule.folderId);
 }
 
 async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: ExecutionContext) {
@@ -474,7 +491,9 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 		parsedEmail.html || "",
 	].join("\n");
 	ctx.waitUntil(forwardMatchingContentRules(message, env, mailboxId, forwardingSearchText));
-	const destinationFolder = findContentLabelFolder(env, mailboxId, forwardingSearchText);
+	const labelRule = findContentLabelRule(env, mailboxId, (parsedEmail.from?.address || "").toLowerCase(), forwardingSearchText);
+	if (labelRule) console.log(`Labeling ${mailboxId} email by content rule ${labelRule.name} into folder ${labelRule.folderId}`);
+	const destinationFolder = labelRule?.folderId ?? Folders.INBOX;
 
 	const messageId = crypto.randomUUID();
 	const mailboxKey = `mailboxes/${mailboxId}.json`;
@@ -487,6 +506,7 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 	}
 
 	const stub = env.MAILBOX.get(env.MAILBOX.idFromName(mailboxId));
+	await ensureContentLabelFolder(stub, labelRule);
 
 	const attachmentData: StoredAttachment[] = [];
 	if (parsedEmail.attachments) {

@@ -15,9 +15,11 @@ export type ContentForwardRule = {
 export type ContentLabelRule = {
 	name: string;
 	mailboxId: string;
+	fromPattern?: string;
 	pattern: string;
 	flags?: string;
 	folderId: string;
+	folderName?: string;
 };
 
 export function getConfiguredEmailAddresses(env: { EMAIL_ADDRESSES?: unknown }): string[] {

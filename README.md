@@ -89,14 +89,16 @@ Agentic Inbox stores mail in folders rather than separate Gmail-style labels. In
   {
     "name": "booking-folder",
     "mailboxId": "codex@hyatusliving.com",
+    "fromPattern": "^noreply@example\\.com$",
     "pattern": "\\b(reservation|booking)\\b",
     "flags": "i",
-    "folderId": "booking"
+    "folderId": "booking",
+    "folderName": "Booking"
   }
 ]
 ```
 
-Each rule applies only to its `mailboxId`. The first matching rule wins. `folderId` can be a system folder ID such as `inbox`, `archive`, `trash`, or a custom folder ID/name that already exists in the mailbox.
+Each rule applies only to its `mailboxId`. `fromPattern` is optional and matches the parsed sender email address. The first matching rule wins. `folderId` can be a system folder ID such as `inbox`, `archive`, `trash`, or a custom folder ID. Custom folders declared by label rules are created automatically with `folderName` when folders are listed or matching inbound mail arrives.
 
 ### Deploy
 
