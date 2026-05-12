@@ -100,6 +100,14 @@ Agentic Inbox stores mail in folders rather than separate Gmail-style labels. In
 
 Each rule applies only to its `mailboxId`. `fromPattern` is optional and matches the parsed sender email address. The first matching rule wins. `folderId` can be a system folder ID such as `inbox`, `archive`, `trash`, or a custom folder ID. Custom folders declared by label rules are created automatically with `folderName` when folders are listed or matching inbound mail arrives.
 
+To apply the configured label rules to existing mail, call:
+
+```bash
+curl -X POST "https://codex-inbox.hyatusliving.com/api/v1/mailboxes/codex%40hyatusliving.com/content-labels/backfill"
+```
+
+Backfill only applies deployed `CONTENT_LABEL_RULES`; callers cannot submit ad hoc regexes or arbitrary target folders.
+
 ### Deploy
 
 ```bash

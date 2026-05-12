@@ -351,6 +351,15 @@ app.post("/api/v1/mailboxes/:mailboxId/threads/:threadId/read", async (c: AppCon
 app.post("/api/v1/mailboxes/:mailboxId/emails/:id/reply", outboundDisabled);
 app.post("/api/v1/mailboxes/:mailboxId/emails/:id/forward", outboundDisabled);
 
+app.post("/api/v1/mailboxes/:mailboxId/content-labels/backfill", async (c: AppContext) => {
+	const mailboxId = c.req.param("mailboxId")!.toLowerCase();
+	const rules = getContentLabelRules(c.env).filter((rule) => rule.mailboxId.toLowerCase() === mailboxId);
+	const stub = c.var.mailboxStub as unknown as {
+		backfillContentLabels: (rules: ContentLabelRule[]) => Promise<unknown>;
+	};
+	return c.json(await stub.backfillContentLabels(rules));
+});
+
 // -- Folders --------------------------------------------------------
 
 app.get("/api/v1/mailboxes/:mailboxId/folders", async (c: AppContext) => {
