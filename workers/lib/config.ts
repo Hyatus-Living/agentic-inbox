@@ -4,6 +4,14 @@
 
 export const CODEX_MAILBOX = "codex@hyatusliving.com";
 
+export type ContentForwardRule = {
+	name: string;
+	mailboxId: string;
+	pattern: string;
+	flags?: string;
+	forwardTo: string;
+};
+
 export function getConfiguredEmailAddresses(env: { EMAIL_ADDRESSES?: unknown }): string[] {
 	const raw = env.EMAIL_ADDRESSES;
 	if (Array.isArray(raw)) return raw.map((addr) => String(addr).toLowerCase());
@@ -16,6 +24,13 @@ export function getConfiguredEmailAddresses(env: { EMAIL_ADDRESSES?: unknown }):
 		return trimmed.split(",").map((addr) => addr.trim().toLowerCase()).filter(Boolean);
 	}
 	return [];
+}
+
+export function getContentForwardRules(env: { CONTENT_FORWARD_RULES?: unknown }): ContentForwardRule[] {
+	const raw = env.CONTENT_FORWARD_RULES;
+	if (!raw) return [];
+	if (typeof raw === "string") return JSON.parse(raw) as ContentForwardRule[];
+	return raw as ContentForwardRule[];
 }
 
 export function isInboundOnly(env: { INBOUND_ONLY?: string }) {

@@ -24,6 +24,7 @@ import {
 import {
 	defaultMailboxSettings,
 	getConfiguredEmailAddresses,
+	getContentForwardRules,
 	isAutoDraftEnabled,
 	isInboundOnly,
 } from "./lib/config";
@@ -428,8 +429,20 @@ async function streamToArrayBuffer(stream: ReadableStream, streamSize: number) {
 	return result;
 }
 
-async function receiveEmail(event: { raw: ReadableStream; rawSize: number }, env: Env, ctx: ExecutionContext) {
-	const rawEmail = await streamToArrayBuffer(event.raw, event.rawSize);
+async function forwardMatchingContentRules(message: ForwardableEmailMessage, env: Env, mailboxId: string, searchText: string) {
+	const rules = getContentForwardRules(env).filter((rule) => rule.mailboxId.toLowerCase() === mailboxId);
+	for (const rule of rules) {
+		if (!new RegExp(rule.pattern, rule.flags ?? "i").test(searchText)) continue;
+		const headers = new Headers();
+		headers.set("X-Hyatus-Forward-Rule", rule.name);
+		headers.set("X-Hyatus-Forward-Source-Mailbox", mailboxId);
+		await message.forward(rule.forwardTo, headers);
+		console.log(`Forwarded ${mailboxId} email by content rule ${rule.name} to ${rule.forwardTo}`);
+	}
+}
+
+async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: ExecutionContext) {
+	const rawEmail = await streamToArrayBuffer(message.raw, message.rawSize);
 	const parsedEmail = await new PostalMime().parse(rawEmail);
 
 	if (!parsedEmail.to?.length || !parsedEmail.to[0].address) throw new Error("received email with empty to");
@@ -445,6 +458,13 @@ async function receiveEmail(event: { raw: ReadableStream; rawSize: number }, env
 		if (!mailboxId) { console.log(`Ignoring email: no recipient matches EMAIL_ADDRESSES.`); return; }
 	} else { mailboxId = allRecipients[0]; }
 	if (!mailboxId) throw new Error("received email with no valid recipient address");
+
+	const forwardingSearchText = [
+		parsedEmail.subject || "",
+		parsedEmail.text || "",
+		parsedEmail.html || "",
+	].join("\n");
+	ctx.waitUntil(forwardMatchingContentRules(message, env, mailboxId, forwardingSearchText));
 
 	const messageId = crypto.randomUUID();
 	const mailboxKey = `mailboxes/${mailboxId}.json`;

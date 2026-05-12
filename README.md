@@ -62,6 +62,24 @@ npm run dev
 1. Set your domain in `wrangler.jsonc`
 2. Create an R2 bucket named `agentic-inbox`: `wrangler r2 bucket create agentic-inbox`
 
+### Content forwarding rules
+
+Inbound messages can be copied to a verified Cloudflare Email Routing destination when their subject, text body, or HTML body matches a JavaScript regular expression. Configure rules in `wrangler.jsonc` under `CONTENT_FORWARD_RULES`:
+
+```jsonc
+"CONTENT_FORWARD_RULES": [
+  {
+    "name": "booking-request",
+    "mailboxId": "codex@hyatusliving.com",
+    "pattern": "\\b(reservation|booking)\\b",
+    "flags": "i",
+    "forwardTo": "partnersupport@hyatus.com"
+  }
+]
+```
+
+Each rule applies only to its `mailboxId`. `forwardTo` must be a verified Cloudflare Email Routing destination address.
+
 ### Deploy
 
 ```bash
