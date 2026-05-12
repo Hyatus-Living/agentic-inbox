@@ -25,6 +25,7 @@ import {
 	defaultMailboxSettings,
 	getConfiguredEmailAddresses,
 	getContentForwardRules,
+	getContentLabelRules,
 	isAutoDraftEnabled,
 	isInboundOnly,
 } from "./lib/config";
@@ -441,6 +442,14 @@ async function forwardMatchingContentRules(message: ForwardableEmailMessage, env
 	}
 }
 
+function findContentLabelFolder(env: Env, mailboxId: string, searchText: string) {
+	const rules = getContentLabelRules(env).filter((rule) => rule.mailboxId.toLowerCase() === mailboxId);
+	const rule = rules.find((rule) => new RegExp(rule.pattern, rule.flags ?? "i").test(searchText));
+	if (!rule) return Folders.INBOX;
+	console.log(`Labeling ${mailboxId} email by content rule ${rule.name} into folder ${rule.folderId}`);
+	return rule.folderId;
+}
+
 async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: ExecutionContext) {
 	const rawEmail = await streamToArrayBuffer(message.raw, message.rawSize);
 	const parsedEmail = await new PostalMime().parse(rawEmail);
@@ -465,6 +474,7 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 		parsedEmail.html || "",
 	].join("\n");
 	ctx.waitUntil(forwardMatchingContentRules(message, env, mailboxId, forwardingSearchText));
+	const destinationFolder = findContentLabelFolder(env, mailboxId, forwardingSearchText);
 
 	const messageId = crypto.randomUUID();
 	const mailboxKey = `mailboxes/${mailboxId}.json`;
@@ -502,7 +512,7 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 
 	const originalMessageId = parsedEmail.messageId ? extractMsgId(parsedEmail.messageId) : null;
 
-	await stub.createEmail(Folders.INBOX, {
+	await stub.createEmail(destinationFolder, {
 		id: messageId, subject: parsedEmail.subject || "",
 		sender: (parsedEmail.from?.address || "").toLowerCase(), recipient: allRecipients.join(", "),
 		cc: ccRecipients.join(", ") || null, bcc: bccRecipients.join(", ") || null,

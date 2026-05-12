@@ -23,6 +23,7 @@
 		"DOMAINS": "hyatusliving.com",
 		"EMAIL_ADDRESSES": ["codex@hyatusliving.com"],
 		"CONTENT_FORWARD_RULES": [],
+		"CONTENT_LABEL_RULES": [],
 		"INBOUND_ONLY": "true",
 		"AUTO_DRAFT_ENABLED": "false",
 		"SUPER_ADMIN_EMAILS": ["michaelort@hyatus.com"],

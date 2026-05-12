@@ -80,6 +80,24 @@ Inbound messages can be copied to a verified Cloudflare Email Routing destinatio
 
 Each rule applies only to its `mailboxId`. `forwardTo` must be a verified Cloudflare Email Routing destination address.
 
+### Content label rules
+
+Agentic Inbox stores mail in folders rather than separate Gmail-style labels. Inbound messages can be placed into a folder when their subject, text body, or HTML body matches a JavaScript regular expression. Configure rules in `wrangler.jsonc` under `CONTENT_LABEL_RULES`:
+
+```jsonc
+"CONTENT_LABEL_RULES": [
+  {
+    "name": "booking-folder",
+    "mailboxId": "codex@hyatusliving.com",
+    "pattern": "\\b(reservation|booking)\\b",
+    "flags": "i",
+    "folderId": "booking"
+  }
+]
+```
+
+Each rule applies only to its `mailboxId`. The first matching rule wins. `folderId` can be a system folder ID such as `inbox`, `archive`, `trash`, or a custom folder ID/name that already exists in the mailbox.
+
 ### Deploy
 
 ```bash

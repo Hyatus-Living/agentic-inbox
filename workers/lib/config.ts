@@ -12,6 +12,14 @@ export type ContentForwardRule = {
 	forwardTo: string;
 };
 
+export type ContentLabelRule = {
+	name: string;
+	mailboxId: string;
+	pattern: string;
+	flags?: string;
+	folderId: string;
+};
+
 export function getConfiguredEmailAddresses(env: { EMAIL_ADDRESSES?: unknown }): string[] {
 	const raw = env.EMAIL_ADDRESSES;
 	if (Array.isArray(raw)) return raw.map((addr) => String(addr).toLowerCase());
@@ -31,6 +39,13 @@ export function getContentForwardRules(env: { CONTENT_FORWARD_RULES?: unknown })
 	if (!raw) return [];
 	if (typeof raw === "string") return JSON.parse(raw) as ContentForwardRule[];
 	return raw as ContentForwardRule[];
+}
+
+export function getContentLabelRules(env: { CONTENT_LABEL_RULES?: unknown }): ContentLabelRule[] {
+	const raw = env.CONTENT_LABEL_RULES;
+	if (!raw) return [];
+	if (typeof raw === "string") return JSON.parse(raw) as ContentLabelRule[];
+	return raw as ContentLabelRule[];
 }
 
 export function isInboundOnly(env: { INBOUND_ONLY?: string }) {
