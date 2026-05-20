@@ -97,7 +97,13 @@ interface EmailListResponse {
 const api = {
 	// Config
 	getConfig: () =>
-		get<{ domains: string[]; emailAddresses: string[]; inboundOnly: boolean; autoDraftEnabled: boolean }>("/api/v1/config"),
+		get<{
+			domains: string[];
+			emailAddresses: string[];
+			emailAddressAliases: Record<string, string>;
+			inboundOnly: boolean;
+			autoDraftEnabled: boolean;
+		}>("/api/v1/config"),
 	getMe: () =>
 		get<CurrentUser>("/api/v1/me"),
 

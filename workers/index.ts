@@ -24,6 +24,7 @@ import {
 import {
 	defaultMailboxSettings,
 	getConfiguredEmailAddresses,
+	getEmailAddressAliases,
 	getConfiguredMailboxIds,
 	getContentForwardRules,
 	getContentLabelRules,
@@ -146,10 +147,12 @@ app.get("/api/v1/config", (c) => {
 	const domainsRaw = c.env.DOMAINS || "";
 	const domains = domainsRaw.split(",").map((d) => d.trim()).filter(Boolean);
 	const emailAddresses = getConfiguredMailboxIds(c.env);
+	const emailAddressAliases = getEmailAddressAliases(c.env);
 	const isAdmin = currentUserIsSuperAdmin(c);
 	return c.json({
 		domains,
 		emailAddresses: isAdmin ? emailAddresses : [],
+		emailAddressAliases,
 		inboundOnly: isInboundOnly(c.env),
 		autoDraftEnabled: isAutoDraftEnabled(c.env),
 	});
