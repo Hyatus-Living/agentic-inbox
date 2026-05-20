@@ -24,10 +24,12 @@ import {
 import {
 	defaultMailboxSettings,
 	getConfiguredEmailAddresses,
+	getConfiguredMailboxIds,
 	getContentForwardRules,
 	getContentLabelRules,
 	isAutoDraftEnabled,
 	isInboundOnly,
+	resolveMailboxForRecipients,
 	type ContentLabelRule,
 } from "./lib/config";
 
@@ -143,7 +145,7 @@ app.use("/api/v1/mailboxes/:mailboxId/*", requireMailbox);
 app.get("/api/v1/config", (c) => {
 	const domainsRaw = c.env.DOMAINS || "";
 	const domains = domainsRaw.split(",").map((d) => d.trim()).filter(Boolean);
-	const emailAddresses = getConfiguredEmailAddresses(c.env);
+	const emailAddresses = getConfiguredMailboxIds(c.env);
 	const isAdmin = currentUserIsSuperAdmin(c);
 	return c.json({
 		domains,
@@ -216,8 +218,8 @@ app.post("/api/v1/mailboxes", async (c) => {
 	if (denied) return denied;
 	const { name, settings, email: rawEmail } = CreateMailboxBody.parse(await c.req.json());
 	const email = rawEmail.toLowerCase();
-	const allowedAddresses = getConfiguredEmailAddresses(c.env);
-	if (allowedAddresses.length > 0 && !allowedAddresses.map((a) => a.toLowerCase()).includes(email)) {
+	const allowedMailboxes = getConfiguredMailboxIds(c.env);
+	if (allowedMailboxes.length > 0 && !allowedMailboxes.includes(email)) {
 		return c.json({ error: "Mailbox creation is restricted to configured EMAIL_ADDRESSES" }, 403);
 	}
 	const key = `mailboxes/${email}.json`;
@@ -487,12 +489,14 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 	const ccRecipients = (parsedEmail.cc || []).map((e) => e.address?.toLowerCase()).filter(Boolean) as string[];
 	const bccRecipients = (parsedEmail.bcc || []).map((e) => e.address?.toLowerCase()).filter(Boolean) as string[];
 
-	let mailboxId: string | undefined;
-	if (allowedAddresses.length > 0) {
-		mailboxId = allRecipients.find((addr) => allowedAddresses.includes(addr));
-		if (!mailboxId) { console.log(`Ignoring email: no recipient matches EMAIL_ADDRESSES.`); return; }
-	} else { mailboxId = allRecipients[0]; }
-	if (!mailboxId) throw new Error("received email with no valid recipient address");
+	const mailboxResolution = allowedAddresses.length > 0
+		? resolveMailboxForRecipients(env, allRecipients)
+		: { recipientAddress: allRecipients[0], mailboxId: allRecipients[0] };
+	if (!mailboxResolution?.mailboxId) {
+		console.log(`Ignoring email: no recipient matches EMAIL_ADDRESSES.`);
+		return;
+	}
+	const mailboxId = mailboxResolution.mailboxId;
 
 	const forwardingSearchText = [
 		parsedEmail.subject || "",
@@ -507,7 +511,7 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 	const messageId = crypto.randomUUID();
 	const mailboxKey = `mailboxes/${mailboxId}.json`;
 	if (!(await env.BUCKET.head(mailboxKey))) {
-		if (!allowedAddresses.includes(mailboxId)) { console.log(`Ignoring email for ${mailboxId}: mailbox does not exist`); return; }
+		if (!getConfiguredMailboxIds(env).includes(mailboxId)) { console.log(`Ignoring email for ${mailboxId}: mailbox does not exist`); return; }
 		await env.BUCKET.put(mailboxKey, JSON.stringify(defaultMailboxSettings(mailboxId)));
 		const initStub = env.MAILBOX.get(env.MAILBOX.idFromName(mailboxId));
 		await initStub.getFolders();

@@ -45,7 +45,7 @@ The app enforces grants on:
 
 Use `https://codex-inbox.hyatusliving.com/admin`.
 
-1. Select the mailbox, for example `codex@hyatusliving.com`.
+1. Select the mailbox, for example `ai@hyatusliving.com`.
 2. Select `Google user` or `Service token`.
 3. Enter the principal:
    - `user@hyatus.com`
@@ -57,7 +57,7 @@ Removing a grant immediately blocks new API, UI, Agent, and MCP requests for tha
 
 ## Current Bootstrap Grant
 
-`codex@hyatusliving.com` is bootstrapped with the Codex Access service-token client ID so existing agent access continues after deployment.
+`ai@hyatusliving.com` is bootstrapped with the Codex Access service-token client ID. `codex@hyatusliving.com` and `claude@hyatusliving.com` are inbound aliases that store into that mailbox.
 
 ## Authorization Rules
 

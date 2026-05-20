@@ -21,12 +21,16 @@
 		// TEAM_DOMAIN may be the base Access URL or the full /cdn-cgi/access/certs URL.
 		// The worker now fails closed outside local development if Access is not configured.
 		"DOMAINS": "hyatusliving.com",
-		"EMAIL_ADDRESSES": ["codex@hyatusliving.com"],
+		"EMAIL_ADDRESSES": ["ai@hyatusliving.com", "codex@hyatusliving.com", "claude@hyatusliving.com"],
+		"EMAIL_ADDRESS_ALIASES": {
+			"codex@hyatusliving.com": "ai@hyatusliving.com",
+			"claude@hyatusliving.com": "ai@hyatusliving.com"
+		},
 		"CONTENT_FORWARD_RULES": [],
 		"CONTENT_LABEL_RULES": [
 			{
 				"name": "openai-chatgpt-two-fa",
-				"mailboxId": "codex@hyatusliving.com",
+				"mailboxId": "ai@hyatusliving.com",
 				"fromPattern": "^noreply@tm\\d*\\.openai\\.com$",
 				"pattern": "(?=[\\s\\S]*\\bYour temporary ChatGPT login code\\b)(?=[\\s\\S]*\\bEnter this temporary verification code to continue\\b)",
 				"flags": "i",
@@ -39,7 +43,7 @@
 		"SUPER_ADMIN_EMAILS": ["michaelort@hyatus.com"],
 		"BOOTSTRAP_MAILBOX_GRANTS": [
 			{
-				"mailboxId": "codex@hyatusliving.com",
+				"mailboxId": "ai@hyatusliving.com",
 				"principalType": "service_token",
 				"principalId": "687101efd9c5f56aff9fb7478c2d15da.access",
 				"role": "service_agent",

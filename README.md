@@ -62,6 +62,20 @@ npm run dev
 1. Set your domain in `wrangler.jsonc`
 2. Create an R2 bucket named `agentic-inbox`: `wrangler r2 bucket create agentic-inbox`
 
+### Mailbox aliases
+
+`EMAIL_ADDRESSES` is the list of accepted inbound recipients. `EMAIL_ADDRESS_ALIASES` maps accepted alias addresses into the canonical mailbox where mail is stored:
+
+```jsonc
+"EMAIL_ADDRESSES": ["ai@hyatusliving.com", "codex@hyatusliving.com", "claude@hyatusliving.com"],
+"EMAIL_ADDRESS_ALIASES": {
+  "codex@hyatusliving.com": "ai@hyatusliving.com",
+  "claude@hyatusliving.com": "ai@hyatusliving.com"
+}
+```
+
+With this config, mail sent to `codex@hyatusliving.com` or `claude@hyatusliving.com` is stored in the `ai@hyatusliving.com` mailbox while the original `To` recipient remains visible on the email record.
+
 ### Content forwarding rules
 
 Inbound messages can be copied to a verified Cloudflare Email Routing destination when their subject, text body, or HTML body matches a JavaScript regular expression. Configure rules in `wrangler.jsonc` under `CONTENT_FORWARD_RULES`:
@@ -70,7 +84,7 @@ Inbound messages can be copied to a verified Cloudflare Email Routing destinatio
 "CONTENT_FORWARD_RULES": [
   {
     "name": "booking-request",
-    "mailboxId": "codex@hyatusliving.com",
+    "mailboxId": "ai@hyatusliving.com",
     "pattern": "\\b(reservation|booking)\\b",
     "flags": "i",
     "forwardTo": "partnersupport@hyatus.com"
@@ -88,7 +102,7 @@ Agentic Inbox stores mail in folders rather than separate Gmail-style labels. In
 "CONTENT_LABEL_RULES": [
   {
     "name": "booking-folder",
-    "mailboxId": "codex@hyatusliving.com",
+    "mailboxId": "ai@hyatusliving.com",
     "fromPattern": "^noreply@example\\.com$",
     "pattern": "\\b(reservation|booking)\\b",
     "flags": "i",
@@ -103,7 +117,7 @@ Each rule applies only to its `mailboxId`. `fromPattern` is optional and matches
 To apply the configured label rules to existing mail, call:
 
 ```bash
-curl -X POST "https://codex-inbox.hyatusliving.com/api/v1/mailboxes/codex%40hyatusliving.com/content-labels/backfill"
+curl -X POST "https://codex-inbox.hyatusliving.com/api/v1/mailboxes/ai%40hyatusliving.com/content-labels/backfill"
 ```
 
 Backfill only applies deployed `CONTENT_LABEL_RULES`; callers cannot submit ad hoc regexes or arbitrary target folders.

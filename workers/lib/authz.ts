@@ -150,17 +150,26 @@ export class AuthzDO extends DurableObject<Env> {
 	}
 
 	private ensureBootstrapGrants() {
-		const existing = [...this.ctx.storage.sql.exec<{ value: string }>("SELECT value FROM authz_meta WHERE key = 'bootstrap_grants_applied'")][0];
-		if (existing) return;
+		const grants = parseBootstrapGrants(this.env.BOOTSTRAP_MAILBOX_GRANTS);
+		const signature = JSON.stringify(grants.map((grant) => ({
+			...grant,
+			mailboxId: grant.mailboxId.toLowerCase(),
+			principalId: normalizePrincipal(grant.principalType, grant.principalId),
+			role: grant.role ?? (grant.principalType === "service_token" ? "service_agent" : "viewer"),
+		})));
+		const existing = [...this.ctx.storage.sql.exec<{ value: string }>("SELECT value FROM authz_meta WHERE key = 'bootstrap_grants_signature'")][0];
+		if (existing?.value === signature) return;
 
 		const now = new Date().toISOString();
-		for (const grant of parseBootstrapGrants(this.env.BOOTSTRAP_MAILBOX_GRANTS)) {
+		for (const grant of grants) {
 			const principalId = normalizePrincipal(grant.principalType, grant.principalId);
 			const role = grant.role ?? (grant.principalType === "service_token" ? "service_agent" : "viewer");
 			this.ctx.storage.sql.exec(
-				`INSERT OR IGNORE INTO mailbox_grants
+				`INSERT INTO mailbox_grants
 					(mailbox_id, principal_type, principal_id, role, label, created_at, updated_at)
-				 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)`,
+				 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
+				 ON CONFLICT(mailbox_id, principal_type, principal_id)
+				 DO UPDATE SET role = excluded.role, label = excluded.label, updated_at = excluded.updated_at`,
 				grant.mailboxId.toLowerCase(),
 				grant.principalType,
 				principalId,
@@ -170,8 +179,8 @@ export class AuthzDO extends DurableObject<Env> {
 			);
 		}
 		this.ctx.storage.sql.exec(
-			"INSERT OR REPLACE INTO authz_meta (key, value) VALUES ('bootstrap_grants_applied', ?1)",
-			now,
+			"INSERT OR REPLACE INTO authz_meta (key, value) VALUES ('bootstrap_grants_signature', ?1)",
+			signature,
 		);
 	}
 

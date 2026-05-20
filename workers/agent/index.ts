@@ -46,7 +46,7 @@ function defineTool(def: {
  * Default system prompt used when no custom prompt is configured for a mailbox.
  * Users can override this on a per-mailbox basis via the Settings UI.
  */
-const DEFAULT_SYSTEM_PROMPT = `You are a read-only email assistant for codex@hyatusliving.com.
+const DEFAULT_SYSTEM_PROMPT = `You are a read-only email assistant for ai@hyatusliving.com.
 
 You can list, read, and search inbound emails and conversation threads. You cannot send, draft, delete, move, archive, or mutate email.
 
