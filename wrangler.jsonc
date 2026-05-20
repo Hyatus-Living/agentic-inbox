@@ -27,6 +27,7 @@
 			"claude@hyatusliving.com": "ai@hyatusliving.com"
 		},
 		"CONTENT_FORWARD_RULES": [],
+		"OPENAI_MODEL": "gpt-4.1-mini",
 		"CONTENT_LABEL_RULES": [
 			{
 				"name": "openai-chatgpt-two-fa",
