@@ -8,7 +8,7 @@ import PostalMime from "postal-mime";
 import { z } from "zod";
 import { storeAttachments, type StoredAttachment } from "./lib/attachments";
 import {
-	listMailboxes,
+	listCanonicalMailboxes,
 } from "./lib/email-helpers";
 import { Folders } from "../shared/folders";
 import type { Env } from "./types";
@@ -160,7 +160,7 @@ app.get("/api/v1/config", (c) => {
 
 app.get("/api/v1/me", async (c) => {
 	const principal = currentPrincipal(c);
-	const allMailboxes = await listMailboxes(c.env.BUCKET);
+	const allMailboxes = await listCanonicalMailboxes(c.env);
 	const visibleMailboxes = await filterVisibleMailboxes(c.env, principal, allMailboxes.map((m) => ({ ...m, name: m.id })));
 	return c.json({
 		principal,
@@ -211,7 +211,7 @@ app.delete("/api/v1/admin/mailboxes/:mailboxId/grants/:principalId", async (c) =
 // -- Mailboxes ------------------------------------------------------
 
 app.get("/api/v1/mailboxes", async (c) => {
-	const allMailboxes = await listMailboxes(c.env.BUCKET);
+	const allMailboxes = await listCanonicalMailboxes(c.env);
 	const visibleMailboxes = await filterVisibleMailboxes(c.env, currentPrincipal(c), allMailboxes.map((m) => ({ ...m, name: m.id })));
 	return c.json(visibleMailboxes);
 });

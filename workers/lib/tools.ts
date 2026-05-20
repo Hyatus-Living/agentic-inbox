@@ -21,7 +21,7 @@ import {
 	getFullThread,
 	buildQuotedReplyBlock,
 	textToHtml,
-	listMailboxes,
+	listCanonicalMailboxes,
 } from "./email-helpers";
 import { verifyDraft } from "./ai";
 import { Folders } from "../../shared/folders";
@@ -38,7 +38,7 @@ type MailboxSearchStub = {
 // ── list_mailboxes ─────────────────────────────────────────────────
 
 export async function toolListMailboxes(env: Env) {
-	return listMailboxes(env.BUCKET);
+	return listCanonicalMailboxes(env);
 }
 
 // ── list_emails ────────────────────────────────────────────────────

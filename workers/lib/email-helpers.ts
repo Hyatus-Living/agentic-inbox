@@ -13,6 +13,7 @@ import type { EmailFull } from "./schemas";
 import { Folders } from "../../shared/folders";
 import type { Env } from "../types";
 import { formatQuotedDate } from "../../shared/dates";
+import { getEmailAddressAliases } from "./config";
 
 // ── DO Stub ────────────────────────────────────────────────────────
 
@@ -42,6 +43,13 @@ export async function listMailboxes(
 		const id = obj.key.replace("mailboxes/", "").replace(".json", "");
 		return { id, email: id };
 	});
+}
+
+export async function listCanonicalMailboxes(
+	env: Env,
+): Promise<{ id: string; email: string }[]> {
+	const aliases = new Set(Object.keys(getEmailAddressAliases(env)));
+	return (await listMailboxes(env.BUCKET)).filter((mailbox) => !aliases.has(mailbox.id.toLowerCase()));
 }
 
 // ── Sender Validation ──────────────────────────────────────────────
