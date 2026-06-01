@@ -62,6 +62,11 @@ const GrantBody = z.object({
 	label: z.string().optional(),
 });
 
+const SuperAdminBody = z.object({
+	email: z.string().email(),
+	label: z.string().optional(),
+});
+
 // -- Helpers --------------------------------------------------------
 
 function outboundDisabled(c: AppContext) {
@@ -74,12 +79,12 @@ function currentPrincipal(c: AppContext): AuthPrincipal {
 	return principal;
 }
 
-function currentUserIsSuperAdmin(c: AppContext) {
+async function currentUserIsSuperAdmin(c: AppContext) {
 	return isSuperAdmin(c.env, currentPrincipal(c));
 }
 
-function requireSuperAdmin(c: AppContext) {
-	if (!currentUserIsSuperAdmin(c)) return c.json({ error: "Super admin access required" }, 403);
+async function requireSuperAdmin(c: AppContext) {
+	if (!(await currentUserIsSuperAdmin(c))) return c.json({ error: "Super admin access required" }, 403);
 	return null;
 }
 
@@ -143,12 +148,12 @@ app.use("/api/v1/mailboxes/:mailboxId/*", requireMailbox);
 
 // -- Config ---------------------------------------------------------
 
-app.get("/api/v1/config", (c) => {
+app.get("/api/v1/config", async (c) => {
 	const domainsRaw = c.env.DOMAINS || "";
 	const domains = domainsRaw.split(",").map((d) => d.trim()).filter(Boolean);
 	const emailAddresses = getConfiguredMailboxIds(c.env);
 	const emailAddressAliases = getEmailAddressAliases(c.env);
-	const isAdmin = currentUserIsSuperAdmin(c);
+	const isAdmin = await currentUserIsSuperAdmin(c);
 	return c.json({
 		domains,
 		emailAddresses: isAdmin ? emailAddresses : [],
@@ -164,7 +169,7 @@ app.get("/api/v1/me", async (c) => {
 	const visibleMailboxes = await filterVisibleMailboxes(c.env, principal, allMailboxes.map((m) => ({ ...m, name: m.id })));
 	return c.json({
 		principal,
-		isSuperAdmin: isSuperAdmin(c.env, principal),
+		isSuperAdmin: await isSuperAdmin(c.env, principal),
 		visibleMailboxes: visibleMailboxes.map((mailbox) => mailbox.id),
 	});
 });
@@ -172,13 +177,29 @@ app.get("/api/v1/me", async (c) => {
 // -- Admin ----------------------------------------------------------
 
 app.use("/api/v1/admin/*", async (c, next) => {
-	const denied = requireSuperAdmin(c);
+	const denied = await requireSuperAdmin(c);
 	if (denied) return denied;
 	await next();
 });
 
 app.get("/api/v1/admin/principals", async (c) => {
 	return c.json(await getAuthzStub(c.env).listPrincipals());
+});
+
+app.get("/api/v1/admin/super-admins", async (c) => {
+	return c.json(await getAuthzStub(c.env).listSuperAdmins());
+});
+
+app.put("/api/v1/admin/super-admins", async (c) => {
+	const parsed = SuperAdminBody.parse(await c.req.json());
+	if (!parsed.email.trim().toLowerCase().endsWith("@hyatus.com")) {
+		return c.json({ error: "Super admins must use a @hyatus.com Google Workspace account" }, 400);
+	}
+	return c.json(await getAuthzStub(c.env).upsertSuperAdmin(parsed.email, parsed.label));
+});
+
+app.delete("/api/v1/admin/super-admins/:email", async (c) => {
+	return c.json(await getAuthzStub(c.env).deleteSuperAdmin(decodeURIComponent(c.req.param("email")!)));
 });
 
 app.get("/api/v1/admin/mailboxes/:mailboxId/grants", async (c) => {
@@ -217,7 +238,7 @@ app.get("/api/v1/mailboxes", async (c) => {
 });
 
 app.post("/api/v1/mailboxes", async (c) => {
-	const denied = requireSuperAdmin(c);
+	const denied = await requireSuperAdmin(c);
 	if (denied) return denied;
 	const { name, settings, email: rawEmail } = CreateMailboxBody.parse(await c.req.json());
 	const email = rawEmail.toLowerCase();
@@ -242,7 +263,7 @@ app.get("/api/v1/mailboxes/:mailboxId", async (c) => {
 });
 
 app.put("/api/v1/mailboxes/:mailboxId", async (c) => {
-	const denied = requireSuperAdmin(c);
+	const denied = await requireSuperAdmin(c);
 	if (denied) return denied;
 	const mailboxId = c.req.param("mailboxId")!;
 	const { settings } = (await c.req.json()) as { settings: Record<string, unknown> };
@@ -253,7 +274,7 @@ app.put("/api/v1/mailboxes/:mailboxId", async (c) => {
 });
 
 app.delete("/api/v1/mailboxes/:mailboxId", async (c) => {
-	const denied = requireSuperAdmin(c);
+	const denied = await requireSuperAdmin(c);
 	if (denied) return denied;
 	const mailboxId = c.req.param("mailboxId")!;
 	const key = `mailboxes/${mailboxId}.json`;
@@ -323,7 +344,7 @@ app.put("/api/v1/mailboxes/:mailboxId/emails/:id", async (c: AppContext) => {
 });
 
 app.delete("/api/v1/mailboxes/:mailboxId/emails/:id", async (c: AppContext) => {
-	const denied = requireSuperAdmin(c);
+	const denied = await requireSuperAdmin(c);
 	if (denied) return denied;
 	const id = c.req.param("id")!;
 	const attachments = await c.var.mailboxStub.deleteEmail(id);
@@ -333,7 +354,7 @@ app.delete("/api/v1/mailboxes/:mailboxId/emails/:id", async (c: AppContext) => {
 });
 
 app.post("/api/v1/mailboxes/:mailboxId/emails/:id/move", async (c: AppContext) => {
-	const denied = requireSuperAdmin(c);
+	const denied = await requireSuperAdmin(c);
 	if (denied) return denied;
 	const { folderId } = (await c.req.json()) as { folderId: string };
 	const success = await c.var.mailboxStub.moveEmail(c.req.param("id")!, folderId);
@@ -373,7 +394,7 @@ app.get("/api/v1/mailboxes/:mailboxId/folders", async (c: AppContext) => {
 });
 
 app.post("/api/v1/mailboxes/:mailboxId/folders", async (c: AppContext) => {
-	const denied = requireSuperAdmin(c);
+	const denied = await requireSuperAdmin(c);
 	if (denied) return denied;
 	const { name } = (await c.req.json()) as { name: string };
 	const slug = slugify(name);
@@ -383,7 +404,7 @@ app.post("/api/v1/mailboxes/:mailboxId/folders", async (c: AppContext) => {
 });
 
 app.put("/api/v1/mailboxes/:mailboxId/folders/:id", async (c: AppContext) => {
-	const denied = requireSuperAdmin(c);
+	const denied = await requireSuperAdmin(c);
 	if (denied) return denied;
 	const { name } = (await c.req.json()) as { name: string };
 	const f = await c.var.mailboxStub.updateFolder(c.req.param("id")!, name);
@@ -391,7 +412,7 @@ app.put("/api/v1/mailboxes/:mailboxId/folders/:id", async (c: AppContext) => {
 });
 
 app.delete("/api/v1/mailboxes/:mailboxId/folders/:id", async (c: AppContext) => {
-	const denied = requireSuperAdmin(c);
+	const denied = await requireSuperAdmin(c);
 	if (denied) return denied;
 	const ok = await c.var.mailboxStub.deleteFolder(c.req.param("id")!);
 	return ok ? c.body(null, 204) : c.json({ error: "Folder not found or cannot be deleted" }, 400);

@@ -9,7 +9,7 @@ import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { Link as RouterLink } from "react-router";
 import { queryKeys } from "~/queries/keys";
 import api from "~/services/api";
-import type { GrantRole, MailboxGrant, PrincipalType } from "~/types";
+import type { GrantRole, MailboxGrant, PrincipalType, SuperAdmin } from "~/types";
 
 export function meta() {
 	return [{ title: "Inbox Admin" }];
@@ -37,8 +37,15 @@ export default function AdminRoute() {
 		queryFn: () => api.listMailboxes(),
 		enabled: !!me?.isSuperAdmin,
 	});
+	const { data: superAdmins = [], isLoading: isLoadingSuperAdmins } = useQuery({
+		queryKey: queryKeys.admin.superAdmins,
+		queryFn: () => api.listSuperAdmins(),
+		enabled: !!me?.isSuperAdmin,
+	});
 
 	const [selectedMailboxId, setSelectedMailboxId] = useState("");
+	const [superAdminEmail, setSuperAdminEmail] = useState("");
+	const [superAdminLabel, setSuperAdminLabel] = useState("");
 	const [principalType, setPrincipalType] = useState<PrincipalType>("human");
 	const [principalId, setPrincipalId] = useState("");
 	const [role, setRole] = useState<GrantRole>("viewer");
@@ -60,6 +67,31 @@ export default function AdminRoute() {
 			: ["admin", "mailboxes", "_disabled", "grants"],
 		queryFn: () => api.listMailboxGrants(selectedMailboxId),
 		enabled: !!me?.isSuperAdmin && !!selectedMailboxId,
+	});
+
+	const upsertSuperAdmin = useMutation({
+		mutationFn: () => api.upsertSuperAdmin(superAdminEmail, superAdminLabel.trim() || undefined),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.admin.superAdmins });
+			queryClient.invalidateQueries({ queryKey: queryKeys.me });
+			setSuperAdminEmail("");
+			setSuperAdminLabel("");
+			toastManager.add({ title: "Super admin saved" });
+		},
+		onError: (error) => {
+			const message = error instanceof Error ? error.message : "Failed to save super admin";
+			toastManager.add({ title: message, variant: "error" });
+		},
+	});
+
+	const deleteSuperAdmin = useMutation({
+		mutationFn: (admin: SuperAdmin) => api.deleteSuperAdmin(admin.email),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.admin.superAdmins });
+			queryClient.invalidateQueries({ queryKey: queryKeys.me });
+			toastManager.add({ title: "Super admin removed" });
+		},
+		onError: () => toastManager.add({ title: "Failed to remove super admin", variant: "error" }),
 	});
 
 	const upsertGrant = useMutation({
@@ -103,6 +135,12 @@ export default function AdminRoute() {
 		event.preventDefault();
 		if (!selectedMailboxId || !principalId.trim()) return;
 		upsertGrant.mutate();
+	};
+
+	const handleSuperAdminSubmit = (event: FormEvent) => {
+		event.preventDefault();
+		if (!superAdminEmail.trim()) return;
+		upsertSuperAdmin.mutate();
 	};
 
 	if (isLoadingMe) {
@@ -180,6 +218,73 @@ export default function AdminRoute() {
 					</div>
 
 					<div className="space-y-5">
+						<div className="rounded-lg border border-kumo-line bg-kumo-base p-5">
+							<div className="mb-4">
+								<div className="text-sm font-semibold text-kumo-default">Super admins</div>
+								<p className="mt-1 text-xs text-kumo-subtle">
+									Super admins can see every mailbox and manage grants, folders, mailboxes, and other admins.
+								</p>
+							</div>
+
+							<form onSubmit={handleSuperAdminSubmit} className="grid gap-3 md:grid-cols-[1fr_1fr_auto]">
+								<Input
+									aria-label="Super admin email"
+									placeholder="user@hyatus.com"
+									value={superAdminEmail}
+									onChange={(event) => setSuperAdminEmail(event.target.value)}
+								/>
+								<Input
+									aria-label="Super admin label"
+									placeholder="Optional label"
+									value={superAdminLabel}
+									onChange={(event) => setSuperAdminLabel(event.target.value)}
+								/>
+								<Button
+									type="submit"
+									variant="primary"
+									icon={<PlusIcon size={16} />}
+									loading={upsertSuperAdmin.isPending}
+									disabled={!superAdminEmail.trim()}
+								>
+									Add
+								</Button>
+							</form>
+
+							<div className="mt-4 overflow-hidden rounded-md border border-kumo-line">
+								{isLoadingSuperAdmins ? (
+									<div className="flex justify-center py-8"><Loader /></div>
+								) : (
+									<div className="divide-y divide-kumo-line">
+										{superAdmins.map((admin) => (
+											<div key={`${admin.source}:${admin.email}`} className="flex items-center gap-3 px-4 py-3">
+												<div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-kumo-fill text-kumo-default">
+													<ShieldCheckIcon size={16} weight="duotone" />
+												</div>
+												<div className="min-w-0 flex-1">
+													<div className="truncate text-sm font-medium text-kumo-default">
+														{admin.label || admin.email}
+													</div>
+													<div className="truncate text-xs text-kumo-subtle">
+														{admin.email} · {admin.source === "configured" ? "Configured" : "Managed"}
+													</div>
+												</div>
+												<Button
+													variant="ghost"
+													shape="square"
+													size="sm"
+													icon={<TrashIcon size={16} />}
+													aria-label={`Remove ${admin.email}`}
+													loading={deleteSuperAdmin.isPending}
+													disabled={admin.source === "configured"}
+													onClick={() => deleteSuperAdmin.mutate(admin)}
+												/>
+											</div>
+										))}
+									</div>
+								)}
+							</div>
+						</div>
+
 						<div className="rounded-lg border border-kumo-line bg-kumo-base p-5">
 							<div className="mb-4">
 								<div className="text-sm font-semibold text-kumo-default">

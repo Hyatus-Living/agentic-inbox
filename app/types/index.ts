@@ -81,6 +81,14 @@ export interface CurrentUser {
 	visibleMailboxes: string[];
 }
 
+export interface SuperAdmin {
+	email: string;
+	label: string | null;
+	source: "configured" | "managed";
+	createdAt: string | null;
+	updatedAt: string | null;
+}
+
 export interface MailboxGrant {
 	mailboxId: string;
 	principalType: PrincipalType;

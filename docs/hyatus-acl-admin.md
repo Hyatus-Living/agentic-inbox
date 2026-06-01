@@ -14,13 +14,13 @@ This deployment uses Cloudflare Access for authentication and app-level ACLs for
 
 ## Super Admin
 
-The bootstrap super admin is configured in `wrangler.jsonc`:
+Bootstrap super admins are configured in `wrangler.jsonc`:
 
 ```json
-"SUPER_ADMIN_EMAILS": ["michaelort@hyatus.com"]
+"SUPER_ADMIN_EMAILS": ["michaelort@hyatus.com", "fahad@hyatus.com"]
 ```
 
-Super admins can open `/admin` in the inbox UI and manage mailbox grants.
+Super admins can open `/admin` in the inbox UI and manage other super admins plus mailbox grants.
 
 ## Mailbox Grants
 
@@ -44,6 +44,10 @@ The app enforces grants on:
 ## Admin UI
 
 Use `https://codex-inbox.hyatusliving.com/admin`.
+
+To add another super admin, enter their `@hyatus.com` Google Workspace email in the Super admins section and click `Add`.
+
+To grant mailbox access:
 
 1. Select the mailbox, for example `ai@hyatusliving.com`.
 2. Select `Google user` or `Service token`.

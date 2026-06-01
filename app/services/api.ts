@@ -2,7 +2,7 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import type { CurrentUser, Email, Folder, GrantRole, Mailbox, MailboxGrant, PrincipalType } from "~/types";
+import type { CurrentUser, Email, Folder, GrantRole, Mailbox, MailboxGrant, PrincipalType, SuperAdmin } from "~/types";
 
 const REQUEST_TIMEOUT_MS = 30_000;
 
@@ -121,6 +121,12 @@ const api = {
 	// Admin
 	listPrincipals: () =>
 		get<MailboxGrant[]>("/api/v1/admin/principals"),
+	listSuperAdmins: () =>
+		get<SuperAdmin[]>("/api/v1/admin/super-admins"),
+	upsertSuperAdmin: (email: string, label?: string) =>
+		put<SuperAdmin[]>("/api/v1/admin/super-admins", { email, label }),
+	deleteSuperAdmin: (email: string) =>
+		del<SuperAdmin[]>(`/api/v1/admin/super-admins/${encodeURIComponent(email)}`),
 	listMailboxGrants: (mailboxId: string) =>
 		get<MailboxGrant[]>(`/api/v1/admin/mailboxes/${mailboxId}/grants`),
 	upsertMailboxGrant: (

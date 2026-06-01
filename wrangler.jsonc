@@ -41,7 +41,7 @@
 		],
 		"INBOUND_ONLY": "true",
 		"AUTO_DRAFT_ENABLED": "false",
-		"SUPER_ADMIN_EMAILS": ["michaelort@hyatus.com"],
+		"SUPER_ADMIN_EMAILS": ["michaelort@hyatus.com", "fahad@hyatus.com"],
 		"BOOTSTRAP_MAILBOX_GRANTS": [
 			{
 				"mailboxId": "ai@hyatusliving.com",
