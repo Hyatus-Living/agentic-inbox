@@ -64,3 +64,37 @@ export interface Folder {
 	name: string;
 	unreadCount: number;
 }
+
+export type PrincipalType = "human" | "service_token";
+export type GrantRole = "viewer" | "service_agent";
+
+export interface AuthPrincipal {
+	type: PrincipalType;
+	id: string;
+	email?: string;
+	label?: string;
+}
+
+export interface CurrentUser {
+	principal: AuthPrincipal;
+	isSuperAdmin: boolean;
+	visibleMailboxes: string[];
+}
+
+export interface SuperAdmin {
+	email: string;
+	label: string | null;
+	source: "configured" | "managed";
+	createdAt: string | null;
+	updatedAt: string | null;
+}
+
+export interface MailboxGrant {
+	mailboxId: string;
+	principalType: PrincipalType;
+	principalId: string;
+	role: GrantRole;
+	label: string | null;
+	createdAt: string;
+	updatedAt: string;
+}

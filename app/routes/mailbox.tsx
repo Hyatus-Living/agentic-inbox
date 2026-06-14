@@ -3,18 +3,27 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import { useEffect, useRef } from "react";
-import { Outlet, useParams } from "react-router";
+import { Navigate, Outlet, useLocation, useParams } from "react-router";
+import { useQuery } from "@tanstack/react-query";
 import AgentSidebar from "~/components/AgentSidebar";
-import ComposeEmail from "~/components/ComposeEmail";
 import Header from "~/components/Header";
 import Sidebar from "~/components/Sidebar";
 import { useMailbox } from "~/queries/mailboxes";
 import { useUIStore } from "~/hooks/useUIStore";
+import { queryKeys } from "~/queries/keys";
+import api from "~/services/api";
 
 export default function MailboxRoute() {
 	const { mailboxId } = useParams<{ mailboxId: string }>();
+	const location = useLocation();
+	const { data: config } = useQuery({
+		queryKey: queryKeys.config,
+		queryFn: () => api.getConfig(),
+		staleTime: Infinity,
+	});
+	const canonicalMailboxId = mailboxId ? config?.emailAddressAliases[mailboxId.toLowerCase()] : undefined;
 	// Prefetch mailbox data for child components
-	useMailbox(mailboxId);
+	useMailbox(canonicalMailboxId ?? mailboxId);
 	const prevMailboxIdRef = useRef<string | undefined>(undefined);
 	const {
 		isSidebarOpen,
@@ -37,6 +46,15 @@ export default function MailboxRoute() {
 
 		prevMailboxIdRef.current = mailboxId;
 	}, [mailboxId, closeComposeModal, closePanel, closeSidebar]);
+
+	if (mailboxId && canonicalMailboxId && canonicalMailboxId !== mailboxId.toLowerCase()) {
+		return (
+			<Navigate
+				to={`${location.pathname.replace(`/mailbox/${mailboxId}`, `/mailbox/${canonicalMailboxId}`)}${location.search}`}
+				replace
+			/>
+		);
+	}
 
 	return (
 		<div className="flex h-screen overflow-hidden">
@@ -75,8 +93,6 @@ export default function MailboxRoute() {
 					<AgentSidebar />
 				</div>
 			)}
-
-			<ComposeEmail />
 		</div>
 	);
 }

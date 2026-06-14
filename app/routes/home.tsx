@@ -5,14 +5,13 @@
 import {
 	Button,
 	Dialog,
-	Empty,
 	Input,
 	Loader,
 	Select,
 	Text,
 	useKumoToastManager,
 } from "@cloudflare/kumo";
-import { EnvelopeIcon, PlusIcon, TrashIcon } from "@phosphor-icons/react";
+import { EnvelopeIcon, PlusIcon, ShieldCheckIcon, TrashIcon } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { Link as RouterLink } from "react-router";
@@ -38,6 +37,10 @@ export default function HomeRoute() {
 		queryKey: queryKeys.config,
 		queryFn: () => api.getConfig(),
 		staleTime: Infinity, // config rarely changes
+	});
+	const { data: meData } = useQuery({
+		queryKey: queryKeys.me,
+		queryFn: () => api.getMe(),
 	});
 
 	const domains = configData?.domains ?? [];
@@ -67,7 +70,7 @@ export default function HomeRoute() {
 	const autoCreateDone = useRef(false);
 	useEffect(() => {
 		if (autoCreateDone.current) return;
-		if (emailAddresses.length === 0 || !mailboxesFetched) return;
+		if (!meData?.isSuperAdmin || emailAddresses.length === 0 || !mailboxesFetched) return;
 		const existingEmails = new Set(
 			mailboxes.map((m) => m.email.toLowerCase()),
 		);
@@ -87,7 +90,7 @@ export default function HomeRoute() {
 			}),
 		).then(() => { if (!cancelled) refetchMailboxes(); });
 		return () => { cancelled = true; };
-	}, [emailAddresses, mailboxes, refetchMailboxes]);
+	}, [emailAddresses, mailboxes, mailboxesFetched, meData?.isSuperAdmin, refetchMailboxes]);
 
 	const handleCreate = async (e: FormEvent) => {
 		e.preventDefault();
@@ -129,13 +132,7 @@ export default function HomeRoute() {
 	};
 
 	const isConfigured = emailAddresses.length > 0;
-	const accounts = isConfigured
-		? emailAddresses.map((addr) => ({
-				id: addr,
-				email: addr,
-				name: addr.split("@")[0] || addr,
-			}))
-		: mailboxes;
+	const accounts = mailboxes;
 
 	const isLoading = !configData;
 
@@ -145,15 +142,27 @@ export default function HomeRoute() {
 				<div className="mb-8">
 					<div className="flex items-center justify-between">
 						<h1 className="text-2xl font-bold text-kumo-default">Mailboxes</h1>
-						{!isConfigured && (
-							<Button
-								variant="primary"
-								icon={<PlusIcon size={16} />}
-								onClick={() => setIsCreateOpen(true)}
-							>
-								New Mailbox
-							</Button>
-						)}
+						<div className="flex items-center gap-2">
+							{meData?.isSuperAdmin && (
+								<RouterLink to="/admin" className="no-underline">
+									<Button
+										variant="secondary"
+										icon={<ShieldCheckIcon size={16} />}
+									>
+										Admin
+									</Button>
+								</RouterLink>
+							)}
+							{meData?.isSuperAdmin && !isConfigured && (
+								<Button
+									variant="primary"
+									icon={<PlusIcon size={16} />}
+									onClick={() => setIsCreateOpen(true)}
+								>
+									New Mailbox
+								</Button>
+							)}
+						</div>
 					</div>
 					{domains.length > 0 && (
 						<p className="text-sm text-kumo-subtle mt-1">
@@ -187,7 +196,7 @@ export default function HomeRoute() {
 										{account.email}
 									</div>
 								</div>
-								{!isConfigured && (
+								{meData?.isSuperAdmin && !isConfigured && (
 									<Button
 										variant="ghost"
 										size="sm"
@@ -222,11 +231,13 @@ export default function HomeRoute() {
 								No mailboxes yet
 							</h3>
 							<p className="text-sm text-kumo-subtle max-w-sm mb-5">
-								{isConfigured
+								{meData?.isSuperAdmin && isConfigured
 									? "Your email routing is configured but no mailboxes have been created yet. They will appear here automatically."
-									: "Create a mailbox to start sending and receiving emails with your domain."}
+									: meData?.isSuperAdmin
+										? "Create a mailbox to start receiving emails with your domain."
+										: "No mailboxes have been assigned to your account yet."}
 							</p>
-							{!isConfigured && (
+							{meData?.isSuperAdmin && !isConfigured && (
 								<Button
 									variant="primary"
 									icon={<PlusIcon size={16} />}

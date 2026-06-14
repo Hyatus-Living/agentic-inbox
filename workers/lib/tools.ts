@@ -21,13 +21,9 @@ import {
 	getFullThread,
 	buildQuotedReplyBlock,
 	textToHtml,
-	listMailboxes,
-	generateMessageId,
-	buildReferencesChain,
-	buildThreadingHeaders,
+	listCanonicalMailboxes,
 } from "./email-helpers";
 import { verifyDraft } from "./ai";
-import { sendEmail } from "../email-sender";
 import { Folders } from "../../shared/folders";
 import type { Env } from "../types";
 
@@ -39,14 +35,10 @@ type MailboxSearchStub = {
 	}) => Promise<unknown>;
 };
 
-type RateLimitStub = {
-	checkSendRateLimit: () => Promise<string | null>;
-};
-
 // ── list_mailboxes ─────────────────────────────────────────────────
 
 export async function toolListMailboxes(env: Env) {
-	return listMailboxes(env.BUCKET);
+	return listCanonicalMailboxes(env);
 }
 
 // ── list_emails ────────────────────────────────────────────────────
@@ -403,68 +395,10 @@ export async function toolSendReply(
 	| { status: "sent"; messageId: string; message: string }
 	| { error: string }
 > {
-	const stub = getMailboxStub(env, mailboxId);
-
-	// Check send rate limit
-	const rateLimitError = await (stub as unknown as RateLimitStub).checkSendRateLimit();
-	if (rateLimitError) {
-		return { error: rateLimitError };
-	}
-
-	const originalEmail = (await stub.getEmail(params.originalEmailId)) as EmailFull | null;
-	if (!originalEmail) {
-		return { error: "Original email not found" };
-	}
-
-	const { originalMsgId, references, threadId } = buildReferencesChain(originalEmail);
-	const fromDomain = mailboxId.split("@")[1];
-	if (!fromDomain) throw new Error("Invalid mailbox email address");
-	const { messageId, outgoingMessageId } = generateMessageId(fromDomain);
-
-	// Verify and append quoted original message
-	const sanitizedBody = await verifyDraft(env.AI, params.bodyHtml);
-	if (!sanitizedBody) {
-		return { error: "Draft verification failed — refusing to send unverified content. Please try again." };
-	}
-	const quotedBlock = buildQuotedReplyBlock({
-		date: originalEmail.date,
-		sender: originalEmail.sender || params.to,
-		body: originalEmail.body ?? undefined,
-	});
-	const fullBodyHtml = sanitizedBody + quotedBlock;
-
-	try {
-		await sendEmail(env.EMAIL, {
-			to: params.to,
-			from: mailboxId,
-			subject: params.subject,
-			html: fullBodyHtml,
-			headers: buildThreadingHeaders(originalMsgId, references),
-		});
-	} catch (e) {
-		console.error("Email send failed:", (e as Error).message);
-		return { error: `Failed to send reply: ${(e as Error).message}` };
-	}
-
-	await stub.createEmail(
-		Folders.SENT,
-		{
-			id: messageId,
-			subject: params.subject,
-			sender: mailboxId.toLowerCase(),
-			recipient: params.to.toLowerCase(),
-			date: new Date().toISOString(),
-			body: fullBodyHtml,
-			in_reply_to: originalMsgId,
-			email_references:
-				references.length > 0 ? JSON.stringify(references) : null,
-			thread_id: threadId,
-			message_id: outgoingMessageId,
-		},
-		[],
-	);
-
-	return { status: "sent", messageId, message: `Reply sent to ${params.to}` };
+	void env;
+	void mailboxId;
+	void params;
+	return { error: "Outbound email is disabled for this inbound-only Hyatus deployment." };
 }
 
 // ── send_email ─────────────────────────────────────────────────────
@@ -481,51 +415,8 @@ export async function toolSendEmail(
 	| { status: "sent"; messageId: string; message: string }
 	| { error: string }
 > {
-	const stub = getMailboxStub(env, mailboxId);
-
-	// Check send rate limit
-	const rateLimitError = await (stub as unknown as RateLimitStub).checkSendRateLimit();
-	if (rateLimitError) {
-		return { error: rateLimitError };
-	}
-
-	const fromDomain = mailboxId.split("@")[1];
-	if (!fromDomain) throw new Error("Invalid mailbox email address");
-	const { messageId, outgoingMessageId } = generateMessageId(fromDomain);
-
-	const sanitizedBody = await verifyDraft(env.AI, params.bodyHtml);
-	if (!sanitizedBody) {
-		return { error: "Draft verification failed — refusing to send unverified content. Please try again." };
-	}
-
-	try {
-		await sendEmail(env.EMAIL, {
-			to: params.to,
-			from: mailboxId,
-			subject: params.subject,
-			html: sanitizedBody,
-		});
-	} catch (e) {
-		console.error("Email send failed:", (e as Error).message);
-		return { error: `Failed to send email: ${(e as Error).message}` };
-	}
-
-	await stub.createEmail(
-		Folders.SENT,
-		{
-			id: messageId,
-			subject: params.subject,
-			sender: mailboxId.toLowerCase(),
-			recipient: params.to.toLowerCase(),
-			date: new Date().toISOString(),
-			body: sanitizedBody,
-			in_reply_to: null,
-			email_references: null,
-			thread_id: messageId,
-			message_id: outgoingMessageId,
-		},
-		[],
-	);
-
-	return { status: "sent", messageId, message: `Email sent to ${params.to}` };
+	void env;
+	void mailboxId;
+	void params;
+	return { error: "Outbound email is disabled for this inbound-only Hyatus deployment." };
 }

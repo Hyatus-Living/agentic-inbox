@@ -13,8 +13,6 @@ import {
 	EnvelopeOpenIcon,
 	EnvelopeSimpleIcon,
 	FolderSimpleIcon,
-	PaperPlaneTiltIcon,
-	PencilSimpleIcon,
 	StarIcon,
 	TrashIcon,
 	XIcon,
@@ -26,6 +24,7 @@ interface EmailPanelToolbarProps {
 	mailboxId?: string;
 	isDraftFolder: boolean;
 	isSending: boolean;
+	canManage: boolean;
 	moveToFolders: Folder[];
 	lastReceivedMessage?: Email;
 	onBack: () => void;
@@ -46,6 +45,7 @@ export default function EmailPanelToolbar({
 	mailboxId,
 	isDraftFolder,
 	isSending,
+	canManage,
 	moveToFolders,
 	onBack,
 	onSendDraft,
@@ -59,6 +59,8 @@ export default function EmailPanelToolbar({
 	onViewSource,
 	onDelete,
 }: EmailPanelToolbarProps) {
+	const showOutboundActions = false;
+
 	return (
 		<div className="flex items-center gap-1 px-3 py-2 border-b border-kumo-line shrink-0 md:px-4">
 			<Button
@@ -71,25 +73,8 @@ export default function EmailPanelToolbar({
 				className="md:hidden shrink-0"
 			/>
 
-			{isDraftFolder ? (
+			{showOutboundActions && (isDraftFolder ? (
 				<>
-					<Button
-						variant="primary"
-						size="sm"
-						icon={<PaperPlaneTiltIcon size={16} />}
-						onClick={onSendDraft}
-						loading={isSending}
-					>
-						{isSending ? "Sending..." : "Send"}
-					</Button>
-					<Button
-						variant="secondary"
-						size="sm"
-						icon={<PencilSimpleIcon size={16} />}
-						onClick={onEditDraft}
-					>
-						Edit
-					</Button>
 				</>
 			) : (
 				<>
@@ -124,9 +109,9 @@ export default function EmailPanelToolbar({
 						/>
 					</Tooltip>
 				</>
-			)}
+			))}
 
-			<div className="h-5 w-px bg-kumo-fill mx-0.5" />
+			{showOutboundActions && <div className="h-5 w-px bg-kumo-fill mx-0.5" />}
 
 			<Tooltip content={email.starred ? "Unstar" : "Star"} side="bottom" asChild>
 				<Button
@@ -156,7 +141,7 @@ export default function EmailPanelToolbar({
 				/>
 			</Tooltip>
 
-			<MoveToFolderMenu folders={moveToFolders} onMove={onMove} />
+			{canManage && <MoveToFolderMenu folders={moveToFolders} onMove={onMove} />}
 
 			<div className="ml-auto flex items-center gap-0.5">
 				<Tooltip content="View source" side="bottom" asChild>
@@ -169,16 +154,18 @@ export default function EmailPanelToolbar({
 						aria-label="View source"
 					/>
 				</Tooltip>
-				<Tooltip content="Delete" side="bottom" asChild>
-					<Button
-						variant="ghost"
-						shape="square"
-						size="sm"
-						icon={<TrashIcon size={18} />}
-						onClick={onDelete}
-						aria-label="Delete"
-					/>
-				</Tooltip>
+				{canManage && (
+					<Tooltip content="Delete" side="bottom" asChild>
+						<Button
+							variant="ghost"
+							shape="square"
+							size="sm"
+							icon={<TrashIcon size={18} />}
+							onClick={onDelete}
+							aria-label="Delete"
+						/>
+					</Tooltip>
+				)}
 				<Tooltip content="Close" side="bottom" asChild>
 					<Button
 						variant="ghost"

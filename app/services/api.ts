@@ -2,7 +2,7 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import type { Email, Folder, Mailbox } from "~/types";
+import type { CurrentUser, Email, Folder, GrantRole, Mailbox, MailboxGrant, PrincipalType, SuperAdmin } from "~/types";
 
 const REQUEST_TIMEOUT_MS = 30_000;
 
@@ -97,7 +97,15 @@ interface EmailListResponse {
 const api = {
 	// Config
 	getConfig: () =>
-		get<{ domains: string[]; emailAddresses: string[] }>("/api/v1/config"),
+		get<{
+			domains: string[];
+			emailAddresses: string[];
+			emailAddressAliases: Record<string, string>;
+			inboundOnly: boolean;
+			autoDraftEnabled: boolean;
+		}>("/api/v1/config"),
+	getMe: () =>
+		get<CurrentUser>("/api/v1/me"),
 
 	// Mailboxes
 	listMailboxes: () => get<Mailbox[]>("/api/v1/mailboxes"),
@@ -109,6 +117,30 @@ const api = {
 		put<Mailbox>(`/api/v1/mailboxes/${mailboxId}`, { settings }),
 	deleteMailbox: (mailboxId: string) =>
 		del<void>(`/api/v1/mailboxes/${mailboxId}`),
+
+	// Admin
+	listPrincipals: () =>
+		get<MailboxGrant[]>("/api/v1/admin/principals"),
+	listSuperAdmins: () =>
+		get<SuperAdmin[]>("/api/v1/admin/super-admins"),
+	upsertSuperAdmin: (email: string, label?: string) =>
+		put<SuperAdmin[]>("/api/v1/admin/super-admins", { email, label }),
+	deleteSuperAdmin: (email: string) =>
+		del<SuperAdmin[]>(`/api/v1/admin/super-admins/${encodeURIComponent(email)}`),
+	listMailboxGrants: (mailboxId: string) =>
+		get<MailboxGrant[]>(`/api/v1/admin/mailboxes/${mailboxId}/grants`),
+	upsertMailboxGrant: (
+		mailboxId: string,
+		grant: {
+			principalType: PrincipalType;
+			principalId: string;
+			role?: GrantRole;
+			label?: string;
+		},
+	) =>
+		put<MailboxGrant[]>(`/api/v1/admin/mailboxes/${mailboxId}/grants`, grant),
+	deleteMailboxGrant: (mailboxId: string, principalId: string) =>
+		del<MailboxGrant[]>(`/api/v1/admin/mailboxes/${mailboxId}/grants/${encodeURIComponent(principalId)}`),
 
 	// Emails
 	listEmails: (mailboxId: string, params: Record<string, string>, opts?: { signal?: AbortSignal }) =>

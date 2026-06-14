@@ -9,7 +9,7 @@ import {
 	convertToModelMessages,
 	stepCountIs,
 } from "ai";
-import { createWorkersAI } from "workers-ai-provider";
+import { createOpenAI } from "@ai-sdk/openai";
 import { z } from "zod";
 import type { EmailFull, EmailMetadata } from "../lib/schemas";
 import { verifyDraft, isPromptInjection } from "../lib/ai";
@@ -23,13 +23,9 @@ import {
 	toolGetEmail,
 	toolGetThread,
 	toolSearchEmails,
-	toolDraftReply,
-	toolDraftEmail,
-	toolMarkEmailRead,
-	toolMoveEmail,
-	toolDiscardDraft,
 } from "../lib/tools";
-import { Folders, FOLDER_TOOL_DESCRIPTION, MOVE_FOLDER_TOOL_DESCRIPTION } from "../../shared/folders";
+import { Folders, FOLDER_TOOL_DESCRIPTION } from "../../shared/folders";
+import { isAutoDraftEnabled } from "../lib/config";
 import type { Env } from "../types";
 
 // AI SDK v6 changed tool() overloads significantly. We define tools as plain
@@ -50,42 +46,12 @@ function defineTool(def: {
  * Default system prompt used when no custom prompt is configured for a mailbox.
  * Users can override this on a per-mailbox basis via the Settings UI.
  */
-const DEFAULT_SYSTEM_PROMPT = `You are an email assistant that helps manage this inbox. You read emails, draft replies, and help organize conversations.
+const DEFAULT_SYSTEM_PROMPT = `You are a read-only email assistant for ai@hyatusliving.com.
 
-## Writing Style
-Write like a real person. Short, direct, flowing prose. Get to the point. Plain text only - no HTML tags in your replies.
+You can list, read, and search inbound emails and conversation threads. You cannot send, draft, delete, move, archive, or mutate email.
 
-**Formatting rules:**
-- Write in natural paragraphs. NO bullet points, NO numbered lists, NO dashes, NO markdown formatting in email drafts.
-- NO bold (**), NO italic (*), NO headers (#), NO horizontal rules (---), NO code blocks. Plain text only.
-- Links go inline in the text, not on separate lines.
-- Don't structure replies like a template or form letter. Just talk normally.
-
-**Agent Behavior Rules (CRITICAL):**
-- NEVER output meta-commentary about what you are doing (e.g. do not say "I am drafting a reply to Alex", "I checked the thread", etc).
-- When a new email arrives, your ONLY job is to call the \`draft_reply\` tool.
-- DO NOT summarize the email. DO NOT explain your actions.
-- Output NOTHING except the tool call. If you must output text, it should ONLY be the literal draft text itself if tools fail.
-- Before drafting ANY reply, carefully read the full thread history.
-- NEVER repeat information that was already shared in a prior message in the thread.
-- Your reply should only contain NEW information or directly respond to what the person just said. Move the conversation forward, don't rehash it.
-
-## Who Are You Replying To?
-Use the name the person gives in their email body / signature. That's their name - use it. The "from" address is where you send the reply, but the name in the email is how you greet them.
-
-## CRITICAL: Draft Only - Never Send
-You can ONLY draft emails. You do NOT have the ability to send emails directly.
-
-- Use draft_reply to draft replies to existing emails
-- Use draft_email to draft new outbound emails
-- The operator will review and send drafts from the UI - you cannot send them
-
-**CRITICAL: The draft body must contain ONLY the email text.** Never include agent commentary, status messages, meta-notes, markdown formatting, or anything that isn't part of the actual email in the draft body. No "Draft created.", no "---", no "**bold**", no "Here's the draft:", no separators. The body field is the literal email the recipient will read. Everything else goes in your chat message, not in the draft body.
-
-**Don't paste draft contents into the chat.** The drafts are saved via tools - the operator can see them in the Drafts folder. In your chat message, just briefly say what you drafted (e.g. "Drafted a reply to Tim"). Don't duplicate the full email body in the chat.
-
-## Draft Management
-Use discard_draft to delete drafts that the operator rejects or that are no longer needed.`;
+Answer from the email data available to you. If the requested email is not available, say that directly.
+Keep responses concise for a narrow sidebar. Do not use Markdown tables; use short bullets instead.`;
 
 /**
  * Fetch the custom system prompt for a mailbox from its R2 settings.
@@ -111,7 +77,7 @@ function createEmailTools(env: Env, mailboxId: string) {
 	return {
 		list_emails: defineTool({
 			description:
-				"List emails in a folder. Returns email metadata (id, subject, sender, recipient, date, read/starred status, thread_id). Use folder='inbox' for received emails, 'sent' for sent emails.",
+				"List emails in a folder. Returns email metadata (id, subject, sender, recipient, date, read/starred status, thread_id). Use folder='inbox' for received emails.",
 			parameters: z.object({
 				folder: z
 					.string()
@@ -144,7 +110,7 @@ function createEmailTools(env: Env, mailboxId: string) {
 
 		get_thread: defineTool({
 			description:
-				"Get all emails in a conversation thread. This is essential for understanding the full context of a conversation before drafting a response. Returns all messages sorted chronologically.",
+				"Get all emails in a conversation thread. Use this to understand the full context of a conversation. Returns all messages sorted chronologically.",
 			parameters: z.object({
 				threadId: z
 					.string()
@@ -176,97 +142,15 @@ function createEmailTools(env: Env, mailboxId: string) {
 			},
 		}),
 
-		draft_email: defineTool({
-			description:
-				"Draft a new email (not a reply) and save it to the Drafts folder. This does NOT send — it saves a draft for the operator to review. Use this for composing new outbound emails. Write the body as plain text — no HTML tags.",
-			parameters: z.object({
-				to: z.string().email().describe("Recipient email address"),
-				subject: z
-					.string()
-					.describe("Subject line"),
-				body: z
-					.string()
-					.describe(
-						"The plain text body of the email. No HTML — just write normally.",
-					),
-			}),
-			execute: async ({ to, subject, body }): Promise<unknown> => {
-				return toolDraftEmail(env, mailboxId, {
-					to,
-					subject,
-					body,
-					isPlainText: true,
-				});
-			},
-		}),
-
-		draft_reply: defineTool({
-			description:
-				"Draft a reply to an existing email and save it to the Drafts folder. This does NOT send — it saves a draft for the operator to review and send from the UI. Write the body as plain text — no HTML tags.",
-			parameters: z.object({
-				originalEmailId: z
-					.string()
-					.describe("The ID of the email being replied to"),
-				to: z.string().email().describe("Recipient email address"),
-				subject: z
-					.string()
-					.describe("Subject line (usually 'Re: ...')"),
-				body: z
-					.string()
-					.describe(
-						"The plain text body of the reply. No HTML — just write normally.",
-					),
-			}),
-			execute: async ({ originalEmailId, to, subject, body }): Promise<unknown> => {
-				return toolDraftReply(env, mailboxId, {
-					originalEmailId,
-					to,
-					subject,
-					body,
-					isPlainText: true,
-					runVerifyDraft: true,
-				});
-			},
-		}),
-
-		mark_email_read: defineTool({
-			description: "Mark an email as read or unread.",
-			parameters: z.object({
-				emailId: z.string().describe("The email ID"),
-				read: z
-					.boolean()
-					.describe("true to mark as read, false for unread"),
-			}),
-			execute: async ({ emailId, read }): Promise<unknown> => {
-				return toolMarkEmailRead(env, mailboxId, emailId, read);
-			},
-		}),
-
-		move_email: defineTool({
-			description:
-				"Move an email to a different folder (inbox, sent, draft, archive, trash).",
-			parameters: z.object({
-				emailId: z.string().describe("The email ID"),
-				folderId: z
-					.string()
-					.describe(MOVE_FOLDER_TOOL_DESCRIPTION),
-			}),
-			execute: async ({ emailId, folderId }): Promise<unknown> => {
-				return toolMoveEmail(env, mailboxId, emailId, folderId);
-			},
-		}),
-
-		discard_draft: defineTool({
-			description:
-				"Delete a draft email. Use this to discard drafts that are no longer needed or were rejected by the operator.",
-			parameters: z.object({
-				draftId: z.string().describe("The ID of the draft to delete"),
-			}),
-			execute: async ({ draftId }): Promise<unknown> => {
-				return toolDiscardDraft(env, mailboxId, draftId);
-			},
-		}),
 	};
+}
+
+function createAgentModel(env: Env) {
+	if (!env.OPENAI_API_KEY) {
+		throw new Error("OPENAI_API_KEY is not configured for the inbox agent");
+	}
+	const openai = createOpenAI({ apiKey: env.OPENAI_API_KEY });
+	return openai(env.OPENAI_MODEL || "gpt-4.1-mini");
 }
 
 // Use `any` for the Env generic to avoid type conflicts between the custom
@@ -276,12 +160,11 @@ export class EmailAgent extends AIChatAgent<any> {
 	async onChatMessage(onFinish: any) {
 		const env = this.env as Env;
 		const mailboxId = this.name;
-		const workersai = createWorkersAI({ binding: env.AI });
 		const tools = createEmailTools(env, mailboxId);
 		const systemPrompt = await getSystemPrompt(env, mailboxId);
 
 		const result = streamText({
-			model: workersai("@cf/moonshotai/kimi-k2.5"),
+			model: createAgentModel(env),
 			system: systemPrompt,
 			messages: await convertToModelMessages(this.messages),
 			tools,
@@ -300,6 +183,11 @@ export class EmailAgent extends AIChatAgent<any> {
 		const url = new URL(request.url);
 		if (url.pathname === "/onNewEmail" && request.method === "POST") {
 			try {
+				if (!isAutoDraftEnabled(this.env as Env)) {
+					return new Response(JSON.stringify({ status: "skipped", reason: "auto_draft_disabled" }), {
+						headers: { "Content-Type": "application/json" },
+					});
+				}
 				const emailData = await request.json() as {
 					mailboxId: string;
 					emailId: string;
@@ -334,7 +222,6 @@ export class EmailAgent extends AIChatAgent<any> {
 		threadId: string;
 	}) {
 		const env = this.env as Env;
-		const workersai = createWorkersAI({ binding: env.AI });
 		const tools = createEmailTools(env, emailData.mailboxId);
 		const systemPrompt = await getSystemPrompt(env, emailData.mailboxId);
 
@@ -463,7 +350,7 @@ Based on the email content and thread context above, draft a reply using draft_r
 
 		try {
 			const result = await generateText({
-				model: workersai("@cf/moonshotai/kimi-k2.5"),
+				model: createAgentModel(env),
 				system: systemPrompt,
 				messages: await convertToModelMessages(messages),
 				tools,

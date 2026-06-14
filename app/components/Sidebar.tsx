@@ -6,33 +6,29 @@ import { Badge, Button, Dialog, Input, Tooltip } from "@cloudflare/kumo";
 import {
 	ArchiveIcon,
 	CaretLeftIcon,
-	FileIcon,
 	FolderIcon,
-	PaperPlaneTiltIcon,
-	PencilSimpleIcon,
 	PlusIcon,
 	TrashIcon,
 	TrayIcon,
 } from "@phosphor-icons/react";
+import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { NavLink, useNavigate, useParams } from "react-router";
 import { Folders, SYSTEM_FOLDER_IDS } from "shared/folders";
 import { useCreateFolder, useFolders } from "~/queries/folders";
+import { queryKeys } from "~/queries/keys";
 import { useMailbox } from "~/queries/mailboxes";
 import { useUIStore } from "~/hooks/useUIStore";
+import api from "~/services/api";
 
 const FOLDER_ICONS: Record<string, React.ReactNode> = {
 	[Folders.INBOX]: <TrayIcon size={18} weight="regular" />,
-	[Folders.SENT]: <PaperPlaneTiltIcon size={18} weight="regular" />,
-	[Folders.DRAFT]: <FileIcon size={18} weight="regular" />,
 	[Folders.ARCHIVE]: <ArchiveIcon size={18} weight="regular" />,
 	[Folders.TRASH]: <TrashIcon size={18} weight="regular" />,
 };
 
 const SYSTEM_FOLDER_LINKS = [
 	{ id: Folders.INBOX, label: "Inbox" },
-	{ id: Folders.SENT, label: "Sent" },
-	{ id: Folders.DRAFT, label: "Drafts" },
 	{ id: Folders.ARCHIVE, label: "Archive" },
 	{ id: Folders.TRASH, label: "Trash" },
 ];
@@ -78,8 +74,12 @@ export default function Sidebar() {
 	const navigate = useNavigate();
 	const { data: folders = [] } = useFolders(mailboxId);
 	const createFolderMutation = useCreateFolder();
-	const { startCompose, closeSidebar } = useUIStore();
+	const { closeSidebar } = useUIStore();
 	const { data: currentMailbox } = useMailbox(mailboxId);
+	const { data: me } = useQuery({
+		queryKey: queryKeys.me,
+		queryFn: () => api.getMe(),
+	});
 	const [isCreateFolderOpen, setIsCreateFolderOpen] = useState(false);
 	const [newFolderName, setNewFolderName] = useState("");
 
@@ -96,7 +96,7 @@ export default function Sidebar() {
 
 	const handleCreateFolder = (e: React.FormEvent) => {
 		e.preventDefault();
-		if (newFolderName.trim() && mailboxId) {
+		if (me?.isSuperAdmin && newFolderName.trim() && mailboxId) {
 			createFolderMutation.mutate({ mailboxId, name: newFolderName.trim() });
 			setNewFolderName("");
 			setIsCreateFolderOpen(false);
@@ -145,18 +145,6 @@ export default function Sidebar() {
 				</div>
 			</div>
 
-			{/* Compose */}
-			<div className="px-3 py-3">
-				<Button
-					variant="primary"
-					icon={<PencilSimpleIcon size={16} />}
-					onClick={() => startCompose()}
-					className="w-full"
-				>
-					Compose
-				</Button>
-			</div>
-
 			{/* Navigation */}
 			<nav className="flex-1 overflow-y-auto px-2 space-y-0.5">
 				{SYSTEM_FOLDER_LINKS.map((folder) => (
@@ -177,16 +165,18 @@ export default function Sidebar() {
 							<span className="text-xs uppercase tracking-wider font-semibold text-kumo-subtle">
 								Folders
 							</span>
-							<Tooltip content="New folder" asChild>
-								<Button
-									variant="ghost"
-									shape="square"
-									size="sm"
-									icon={<PlusIcon size={16} />}
-									onClick={() => setIsCreateFolderOpen(true)}
-									aria-label="Create new folder"
-								/>
-							</Tooltip>
+							{me?.isSuperAdmin && (
+								<Tooltip content="New folder" asChild>
+									<Button
+										variant="ghost"
+										shape="square"
+										size="sm"
+										icon={<PlusIcon size={16} />}
+										onClick={() => setIsCreateFolderOpen(true)}
+										aria-label="Create new folder"
+									/>
+								</Tooltip>
+							)}
 						</div>
 						{customFolders.map((folder) => (
 							<FolderLink
@@ -202,7 +192,7 @@ export default function Sidebar() {
 				)}
 
 				{/* Add folder button when no custom folders */}
-				{customFolders.length === 0 && (
+				{customFolders.length === 0 && me?.isSuperAdmin && (
 					<div className="pt-5">
 						<div className="flex items-center justify-between px-3 mb-1.5">
 							<span className="text-xs uppercase tracking-wider font-semibold text-kumo-subtle">

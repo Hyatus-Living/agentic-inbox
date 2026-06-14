@@ -5,14 +5,21 @@
 import { routeAgentRequest } from "agents";
 import { Hono } from "hono";
 import { jwtVerify, createRemoteJWKSet } from "jose";
-import { createRequestHandler } from "react-router";
+import { createRequestHandler, RouterContextProvider } from "react-router";
 import { app as apiApp, receiveEmail } from "./index";
+import {
+	canAccessMailbox,
+	getSuperAdminEmails,
+	principalFromAccessPayload,
+	type AuthPrincipal,
+} from "./lib/authz";
 import { EmailMCP } from "./mcp";
 import type { Env } from "./types";
 
 export { MailboxDO } from "./durableObject";
 export { EmailAgent } from "./agent";
 export { EmailMCP } from "./mcp";
+export { AuthzDO } from "./lib/authz";
 
 declare module "react-router" {
 	export interface AppLoadContext {
@@ -39,13 +46,48 @@ function getAccessUrls(teamDomain: string) {
 	return { issuer, certsUrl };
 }
 
+function isLocalRequest(request: Request) {
+	const hostname = new URL(request.url).hostname;
+	return !request.cf || hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+}
+
+type AppContext = {
+	Bindings: Env;
+	Variables: {
+		principal: AuthPrincipal;
+	};
+};
+
+function getLocalPrincipal(env: Env): AuthPrincipal {
+	const firstAdmin = getSuperAdminEmails(env)[0] ?? "local-dev@hyatus.com";
+	const email = firstAdmin.toLowerCase();
+	return { type: "human", id: email, email, label: email };
+}
+
+function getMcpExecutionContext(ctx: ExecutionContext, principal: AuthPrincipal) {
+	const mcpCtx = ctx as ExecutionContext & { props?: Record<string, unknown> };
+	mcpCtx.props = { principal };
+	return mcpCtx;
+}
+
+async function authorizeAgentMailbox(env: Env, principal: AuthPrincipal, request: Request) {
+	const url = new URL(request.url);
+	const parts = url.pathname.split("/").filter(Boolean);
+	if (parts[0] !== "agents" || parts[1] !== "EmailAgent" || !parts[2]) return true;
+	const mailboxId = decodeURIComponent(parts[2]).toLowerCase();
+	const exists = await env.BUCKET.head(`mailboxes/${mailboxId}.json`);
+	if (!exists) return false;
+	return canAccessMailbox(env, principal, mailboxId);
+}
+
 // Main app that wraps the API and adds React Router fallback
-const app = new Hono<{ Bindings: Env }>();
+const app = new Hono<AppContext>();
 
 // Cloudflare Access JWT validation middleware (production only)
 app.use("*", async (c, next) => {
-	// Skip validation in development
-	if (import.meta.env.DEV) {
+	// Skip validation in local development only.
+	if (import.meta.env.DEV || isLocalRequest(c.req.raw)) {
+		c.set("principal", getLocalPrincipal(c.env));
 		return next();
 	}
 
@@ -67,16 +109,15 @@ app.use("*", async (c, next) => {
 	try {
 		const { issuer, certsUrl } = getAccessUrls(TEAM_DOMAIN);
 		const JWKS = createRemoteJWKSet(certsUrl);
-		await jwtVerify(token, JWKS, {
+		const { payload } = await jwtVerify(token, JWKS, {
 			issuer,
 			audience: POLICY_AUD,
 		});
+		c.set("principal", principalFromAccessPayload(payload as Record<string, unknown>));
 	} catch {
 		return c.text("Invalid or expired Access token", 403);
 	}
 
-	// Authorization model note: once a teammate passes the shared Cloudflare
-	// Access policy, they can access all mailboxes in this app by design.
 	return next();
 });
 
@@ -84,10 +125,10 @@ app.use("*", async (c, next) => {
 // Must be before API routes and React Router catch-all
 const mcpHandler = EmailMCP.serve("/mcp", { binding: "EMAIL_MCP" });
 app.all("/mcp", async (c) => {
-	return mcpHandler.fetch(c.req.raw, c.env, c.executionCtx as ExecutionContext);
+	return mcpHandler.fetch(c.req.raw, c.env, getMcpExecutionContext(c.executionCtx as ExecutionContext, c.var.principal));
 });
 app.all("/mcp/*", async (c) => {
-	return mcpHandler.fetch(c.req.raw, c.env, c.executionCtx as ExecutionContext);
+	return mcpHandler.fetch(c.req.raw, c.env, getMcpExecutionContext(c.executionCtx as ExecutionContext, c.var.principal));
 });
 
 // Mount the API routes
@@ -95,23 +136,25 @@ app.route("/", apiApp);
 
 // Agent WebSocket routing - must be before React Router catch-all
 app.all("/agents/*", async (c) => {
-	const response = await routeAgentRequest(c.req.raw, c.env);
+	const allowed = await authorizeAgentMailbox(c.env, c.var.principal, c.req.raw);
+	if (!allowed) return c.text("Not authorized for mailbox", 403);
+	const response = await routeAgentRequest(c.req.raw, c.env, {
+		props: { principal: c.var.principal },
+	});
 	if (response) return response;
 	return c.text("Agent not found", 404);
 });
 
 // React Router catch-all: serves the SPA for all non-API routes
 app.all("*", (c) => {
-	return requestHandler(c.req.raw, {
-		cloudflare: { env: c.env, ctx: c.executionCtx as ExecutionContext },
-	});
+	return requestHandler(c.req.raw, new RouterContextProvider());
 });
 
 // Export the Hono app as the default export with an email handler
 export default {
 	fetch: app.fetch,
 	async email(
-		event: { raw: ReadableStream; rawSize: number },
+		event: ForwardableEmailMessage,
 		env: Env,
 		ctx: ExecutionContext,
 	) {

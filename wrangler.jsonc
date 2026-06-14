@@ -1,8 +1,15 @@
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "agentic-inbox",
-	"compatibility_date": "2025-11-28",
+	"name": "hyatusliving-agentic-inbox",
+	"compatibility_date": "2026-05-07",
 	"main": "./workers/app.ts",
+	"workers_dev": true,
+	"routes": [
+		{
+			"pattern": "codex-inbox.hyatusliving.com",
+			"custom_domain": true
+		}
+	],
 	"observability": {
 		"enabled": true
 	},
@@ -13,20 +20,70 @@
 		// Production deploys must also define POLICY_AUD and TEAM_DOMAIN.
 		// TEAM_DOMAIN may be the base Access URL or the full /cdn-cgi/access/certs URL.
 		// The worker now fails closed outside local development if Access is not configured.
-		"DOMAINS": "example.com",
-		"EMAIL_ADDRESSES": []
+		"DOMAINS": "hyatusliving.com",
+		"EMAIL_ADDRESSES": ["ai@hyatusliving.com", "codex@hyatusliving.com", "claude@hyatusliving.com", "autoprocess@hyatusliving.com"],
+		"EMAIL_ADDRESS_ALIASES": {
+			"codex@hyatusliving.com": "ai@hyatusliving.com",
+			"claude@hyatusliving.com": "ai@hyatusliving.com",
+			"autoprocess@hyatusliving.com": "ai@hyatusliving.com"
+		},
+		"CONTENT_FORWARD_RULES": [
+			{
+				"name": "airbnb-review-removal",
+				"mailboxId": "ai@hyatusliving.com",
+				"pattern": "\\b(?:has been removed at their request|been removed at their request|has been removed upon their request|been removed upon their request|we['’]ve removed reviews from your account)\\b",
+				"flags": "i",
+				"forwardTo": "autoprocess@hyatusliving.com"
+			},
+			{
+				"name": "expedia-partner-central-review-removal",
+				"mailboxId": "ai@hyatusliving.com",
+				"pattern": "\\b(?:Guest review removed|Customer Review Removal)\\b",
+				"flags": "i",
+				"forwardTo": "autoprocess@hyatusliving.com"
+			}
+		],
+		"OPENAI_MODEL": "gpt-4.1-mini",
+		"SIMPLE_AI_STRUCTURED_URL": "https://fast.gptpricing.com/simple-ai/structured",
+		"AIRBNB_REVIEW_REMOVAL_URL": "https://gn6slmok95.execute-api.us-east-1.amazonaws.com/dev/admin-api/airbnb-review-removal",
+		"CONTENT_LABEL_RULES": [
+			{
+				"name": "autoprocess-inbound",
+				"mailboxId": "ai@hyatusliving.com",
+				"recipientPattern": "^autoprocess@hyatusliving\\.com$",
+				"pattern": "[\\s\\S]*",
+				"flags": "i",
+				"folderId": "autoprocess",
+				"folderName": "Auto Process"
+			},
+			{
+				"name": "openai-chatgpt-two-fa",
+				"mailboxId": "ai@hyatusliving.com",
+				"fromPattern": "^noreply@tm\\d*\\.openai\\.com$",
+				"pattern": "(?=[\\s\\S]*\\bYour temporary ChatGPT login code\\b)(?=[\\s\\S]*\\bEnter this temporary verification code to continue\\b)",
+				"flags": "i",
+				"folderId": "two-fa-dynamo",
+				"folderName": "Two FA Dynamo"
+			}
+		],
+		"INBOUND_ONLY": "true",
+		"AUTO_DRAFT_ENABLED": "false",
+		"SUPER_ADMIN_EMAILS": ["michaelort@hyatus.com", "fahad@hyatus.com"],
+		"BOOTSTRAP_MAILBOX_GRANTS": [
+			{
+				"mailboxId": "ai@hyatusliving.com",
+				"principalType": "service_token",
+				"principalId": "687101efd9c5f56aff9fb7478c2d15da.access",
+				"role": "service_agent",
+				"label": "Codex agent service token"
+			}
+		]
 	},
-	"send_email": [
-		{
-			"name": "EMAIL",
-			"remote": true
-		}
-	],
 	"r2_buckets": [
 		{
 			"binding": "BUCKET",
-			"bucket_name": "agentic-inbox",
-			"preview_bucket_name": "agentic-inbox"
+			"bucket_name": "hyatusliving-agentic-inbox",
+			"preview_bucket_name": "hyatusliving-agentic-inbox"
 		}
 	],
 	"ai": {
@@ -45,6 +102,10 @@
 			{
 				"name": "EMAIL_MCP",
 				"class_name": "EmailMCP"
+			},
+			{
+				"name": "AUTHZ",
+				"class_name": "AuthzDO"
 			}
 		]
 	},
@@ -65,6 +126,12 @@
 			"tag": "v3",
 			"new_sqlite_classes": [
 				"EmailMCP"
+			]
+		},
+		{
+			"tag": "v4",
+			"new_sqlite_classes": [
+				"AuthzDO"
 			]
 		}
 	]

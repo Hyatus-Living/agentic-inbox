@@ -9,6 +9,7 @@ import type { SQL } from "drizzle-orm";
 import * as schema from "../db/schema";
 import { Folders } from "../../shared/folders";
 import type { Env } from "../types";
+import type { ContentLabelRule } from "../lib/config";
 import { applyMigrations, mailboxMigrations } from "./migrations";
 
 /**
@@ -526,6 +527,14 @@ export class MailboxDO extends DurableObject<Env> {
 		return this.getEmail(id);
 	}
 
+	async setEmailRawHeaders(id: string, rawHeaders: string) {
+		this.db
+			.update(schema.emails)
+			.set({ raw_headers: rawHeaders })
+			.where(eq(schema.emails.id, id))
+			.run();
+	}
+
 	async markThreadRead(threadId: string) {
 		this.ctx.storage.sql.exec(
 			`UPDATE emails SET read = 1 WHERE thread_id = ? AND read = 0`,
@@ -647,6 +656,47 @@ export class MailboxDO extends DurableObject<Env> {
 			.run();
 
 		return true;
+	}
+
+	async backfillContentLabels(rules: ContentLabelRule[]) {
+		const results = rules.map((rule) => ({
+			ruleName: rule.name,
+			folderId: rule.folderId,
+			matched: 0,
+			moved: 0,
+			alreadyInFolder: 0,
+		}));
+
+		for (const rule of rules) {
+			await this.createFolder(rule.folderId, rule.folderName ?? rule.folderId);
+		}
+
+		const rows = [...this.ctx.storage.sql.exec(
+			`SELECT id, subject, sender, body, folder_id FROM emails ORDER BY date DESC`,
+		)] as Array<{ id: string; subject: string; sender: string; body: string; folder_id: string }>;
+
+		for (const row of rows) {
+			const searchText = `${row.subject || ""}\n${row.body || ""}`;
+			const ruleIndex = rules.findIndex((rule) => {
+				const flags = rule.flags ?? "i";
+				if (rule.fromPattern && !new RegExp(rule.fromPattern, flags).test((row.sender || "").toLowerCase())) return false;
+				return new RegExp(rule.pattern, flags).test(searchText);
+			});
+			if (ruleIndex < 0) continue;
+
+			const rule = rules[ruleIndex];
+			const result = results[ruleIndex];
+			result.matched++;
+			if (row.folder_id === rule.folderId) {
+				result.alreadyInFolder++;
+				continue;
+			}
+
+			await this.moveEmail(row.id, rule.folderId);
+			result.moved++;
+		}
+
+		return { examined: rows.length, results };
 	}
 
 	// ── Search (raw SQL — dynamic condition builder) ───────────────

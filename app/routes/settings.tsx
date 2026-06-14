@@ -4,18 +4,25 @@
 
 import { Badge, Button, Input, Loader, useKumoToastManager } from "@cloudflare/kumo";
 import { RobotIcon, ArrowCounterClockwiseIcon } from "@phosphor-icons/react";
+import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { useParams } from "react-router";
+import { queryKeys } from "~/queries/keys";
 import { useMailbox, useUpdateMailbox } from "~/queries/mailboxes";
+import api from "~/services/api";
 
 // Placeholder shown in the textarea when no custom prompt is set.
 // The authoritative default prompt lives in workers/agent/index.ts (DEFAULT_SYSTEM_PROMPT).
-const PROMPT_PLACEHOLDER = `You are an email assistant that helps manage this inbox. You read emails, draft replies, and help organize conversations.\n\nWrite like a real person. Short, direct, flowing prose. Plain text only.\n\n(Leave empty to use the full built-in default prompt)`;
+const PROMPT_PLACEHOLDER = `You are a read-only email assistant for ai@hyatusliving.com.\n\nYou can list, read, and search inbound emails and conversation threads. You cannot send, draft, delete, move, archive, or mutate email.\n\nKeep responses concise for a narrow sidebar. Do not use Markdown tables; use short bullets instead.\n\n(Leave empty to use the full built-in default prompt)`;
 
 export default function SettingsRoute() {
 	const { mailboxId } = useParams<{ mailboxId: string }>();
 	const toastManager = useKumoToastManager();
 	const { data: mailbox } = useMailbox(mailboxId);
+	const { data: me } = useQuery({
+		queryKey: queryKeys.me,
+		queryFn: () => api.getMe(),
+	});
 	const updateMailboxMutation = useUpdateMailbox();
 
 	const [displayName, setDisplayName] = useState("");
@@ -54,10 +61,19 @@ export default function SettingsRoute() {
 		setAgentPrompt("");
 	};
 
-	if (!mailbox) {
+	if (!mailbox || !me) {
 		return (
 			<div className="flex justify-center py-20">
 				<Loader size="lg" />
+			</div>
+		);
+	}
+
+	if (!me.isSuperAdmin) {
+		return (
+			<div className="max-w-2xl px-4 py-4 md:px-8 md:py-6">
+				<h1 className="text-lg font-semibold text-kumo-default mb-2">Settings</h1>
+				<p className="text-sm text-kumo-subtle">Super admin access is required.</p>
 			</div>
 		);
 	}

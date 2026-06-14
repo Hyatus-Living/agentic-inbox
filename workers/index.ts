@@ -6,20 +6,33 @@ import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
 import PostalMime from "postal-mime";
 import { z } from "zod";
-import { sendEmail } from "./email-sender";
 import { storeAttachments, type StoredAttachment } from "./lib/attachments";
 import {
-	validateSender,
-	SenderValidationError,
-	generateMessageId,
-	buildThreadingHeaders,
-	listMailboxes,
+	listCanonicalMailboxes,
 } from "./lib/email-helpers";
-import { SendEmailRequestSchema } from "./lib/schemas";
-import { handleReplyEmail, handleForwardEmail } from "./routes/reply-forward";
 import { Folders } from "../shared/folders";
 import type { Env } from "./types";
 import { requireMailbox, type MailboxContext } from "./lib/mailbox";
+import {
+	filterVisibleMailboxes,
+	getAuthzStub,
+	isSuperAdmin,
+	type AuthPrincipal,
+	type GrantRole,
+	type PrincipalType,
+} from "./lib/authz";
+import {
+	defaultMailboxSettings,
+	getConfiguredEmailAddresses,
+	getEmailAddressAliases,
+	getConfiguredMailboxIds,
+	getContentForwardRules,
+	getContentLabelRules,
+	isAutoDraftEnabled,
+	isInboundOnly,
+	resolveMailboxForRecipients,
+	type ContentLabelRule,
+} from "./lib/config";
 
 type AppContext = Context<MailboxContext>;
 
@@ -42,7 +55,56 @@ const DraftBody = z.object({
 	draft_id: z.string().optional(),
 });
 
+const GrantBody = z.object({
+	principalType: z.enum(["human", "service_token"]),
+	principalId: z.string().min(1),
+	role: z.enum(["viewer", "service_agent"]).optional(),
+	label: z.string().optional(),
+});
+
+const SuperAdminBody = z.object({
+	email: z.string().email(),
+	label: z.string().optional(),
+});
+
 // -- Helpers --------------------------------------------------------
+
+function outboundDisabled(c: AppContext) {
+	return c.json({ error: "Outbound email is disabled for this inbound-only Hyatus deployment." }, 403);
+}
+
+function currentPrincipal(c: AppContext): AuthPrincipal {
+	const principal = c.var.principal;
+	if (!principal) throw new Error("Cloudflare Access principal missing");
+	return principal;
+}
+
+async function currentUserIsSuperAdmin(c: AppContext) {
+	return isSuperAdmin(c.env, currentPrincipal(c));
+}
+
+async function requireSuperAdmin(c: AppContext) {
+	if (!(await currentUserIsSuperAdmin(c))) return c.json({ error: "Super admin access required" }, 403);
+	return null;
+}
+
+function normalizeGrantInput(input: z.infer<typeof GrantBody>, mailboxId: string) {
+	const principalType = input.principalType as PrincipalType;
+	const principalId = principalType === "human"
+		? input.principalId.trim().toLowerCase()
+		: input.principalId.trim();
+	if (principalType === "human" && !principalId.endsWith("@hyatus.com")) {
+		throw new Error("Human grants must use a @hyatus.com Google Workspace account");
+	}
+	const role = (input.role ?? (principalType === "service_token" ? "service_agent" : "viewer")) as GrantRole;
+	return {
+		mailboxId: mailboxId.toLowerCase(),
+		principalType,
+		principalId,
+		role,
+		label: input.label?.trim() || undefined,
+	};
+}
 
 function slugify(text: string) { // can return "" for non-alphanumeric input
 	return text.toString().toLowerCase()
@@ -81,35 +143,112 @@ app.use("/api/*", cors({
 		return undefined;
 	},
 }));
+app.use("/api/v1/mailboxes/:mailboxId", requireMailbox);
 app.use("/api/v1/mailboxes/:mailboxId/*", requireMailbox);
 
 // -- Config ---------------------------------------------------------
 
-app.get("/api/v1/config", (c) => {
+app.get("/api/v1/config", async (c) => {
 	const domainsRaw = c.env.DOMAINS || "";
 	const domains = domainsRaw.split(",").map((d) => d.trim()).filter(Boolean);
-	const emailAddresses = c.env.EMAIL_ADDRESSES ?? [];
-	return c.json({ domains, emailAddresses });
+	const emailAddresses = getConfiguredMailboxIds(c.env);
+	const emailAddressAliases = getEmailAddressAliases(c.env);
+	const isAdmin = await currentUserIsSuperAdmin(c);
+	return c.json({
+		domains,
+		emailAddresses: isAdmin ? emailAddresses : [],
+		emailAddressAliases,
+		inboundOnly: isInboundOnly(c.env),
+		autoDraftEnabled: isAutoDraftEnabled(c.env),
+	});
+});
+
+app.get("/api/v1/me", async (c) => {
+	const principal = currentPrincipal(c);
+	const allMailboxes = await listCanonicalMailboxes(c.env);
+	const visibleMailboxes = await filterVisibleMailboxes(c.env, principal, allMailboxes.map((m) => ({ ...m, name: m.id })));
+	return c.json({
+		principal,
+		isSuperAdmin: await isSuperAdmin(c.env, principal),
+		visibleMailboxes: visibleMailboxes.map((mailbox) => mailbox.id),
+	});
+});
+
+// -- Admin ----------------------------------------------------------
+
+app.use("/api/v1/admin/*", async (c, next) => {
+	const denied = await requireSuperAdmin(c);
+	if (denied) return denied;
+	await next();
+});
+
+app.get("/api/v1/admin/principals", async (c) => {
+	return c.json(await getAuthzStub(c.env).listPrincipals());
+});
+
+app.get("/api/v1/admin/super-admins", async (c) => {
+	return c.json(await getAuthzStub(c.env).listSuperAdmins());
+});
+
+app.put("/api/v1/admin/super-admins", async (c) => {
+	const parsed = SuperAdminBody.parse(await c.req.json());
+	if (!parsed.email.trim().toLowerCase().endsWith("@hyatus.com")) {
+		return c.json({ error: "Super admins must use a @hyatus.com Google Workspace account" }, 400);
+	}
+	return c.json(await getAuthzStub(c.env).upsertSuperAdmin(parsed.email, parsed.label));
+});
+
+app.delete("/api/v1/admin/super-admins/:email", async (c) => {
+	return c.json(await getAuthzStub(c.env).deleteSuperAdmin(decodeURIComponent(c.req.param("email")!)));
+});
+
+app.get("/api/v1/admin/mailboxes/:mailboxId/grants", async (c) => {
+	const mailboxId = c.req.param("mailboxId")!.toLowerCase();
+	const mailbox = await c.env.BUCKET.head(`mailboxes/${mailboxId}.json`);
+	if (!mailbox) return c.json({ error: "Not found" }, 404);
+	return c.json(await getAuthzStub(c.env).listGrants(mailboxId));
+});
+
+app.put("/api/v1/admin/mailboxes/:mailboxId/grants", async (c) => {
+	const mailboxId = c.req.param("mailboxId")!.toLowerCase();
+	const mailbox = await c.env.BUCKET.head(`mailboxes/${mailboxId}.json`);
+	if (!mailbox) return c.json({ error: "Not found" }, 404);
+	const parsed = GrantBody.parse(await c.req.json());
+	if (parsed.principalType === "human" && !parsed.principalId.trim().toLowerCase().endsWith("@hyatus.com")) {
+		return c.json({ error: "Human grants must use a @hyatus.com Google Workspace account" }, 400);
+	}
+	const grant = normalizeGrantInput(parsed, mailboxId);
+	return c.json(await getAuthzStub(c.env).upsertGrant(grant));
+});
+
+app.delete("/api/v1/admin/mailboxes/:mailboxId/grants/:principalId", async (c) => {
+	const mailboxId = c.req.param("mailboxId")!.toLowerCase();
+	const principalId = decodeURIComponent(c.req.param("principalId")!);
+	const mailbox = await c.env.BUCKET.head(`mailboxes/${mailboxId}.json`);
+	if (!mailbox) return c.json({ error: "Not found" }, 404);
+	return c.json(await getAuthzStub(c.env).deleteGrant(mailboxId, principalId));
 });
 
 // -- Mailboxes ------------------------------------------------------
 
 app.get("/api/v1/mailboxes", async (c) => {
-	const allMailboxes = await listMailboxes(c.env.BUCKET);
-	return c.json(allMailboxes.map((m) => ({ ...m, name: m.id })));
+	const allMailboxes = await listCanonicalMailboxes(c.env);
+	const visibleMailboxes = await filterVisibleMailboxes(c.env, currentPrincipal(c), allMailboxes.map((m) => ({ ...m, name: m.id })));
+	return c.json(visibleMailboxes);
 });
 
 app.post("/api/v1/mailboxes", async (c) => {
+	const denied = await requireSuperAdmin(c);
+	if (denied) return denied;
 	const { name, settings, email: rawEmail } = CreateMailboxBody.parse(await c.req.json());
 	const email = rawEmail.toLowerCase();
-	const allowedAddresses = (c.env.EMAIL_ADDRESSES ?? []) as string[];
-	if (allowedAddresses.length > 0 && !allowedAddresses.map((a) => a.toLowerCase()).includes(email)) {
+	const allowedMailboxes = getConfiguredMailboxIds(c.env);
+	if (allowedMailboxes.length > 0 && !allowedMailboxes.includes(email)) {
 		return c.json({ error: "Mailbox creation is restricted to configured EMAIL_ADDRESSES" }, 403);
 	}
 	const key = `mailboxes/${email}.json`;
 	if (await c.env.BUCKET.head(key)) return c.json({ error: "Mailbox already exists" }, 409);
-	const defaultSettings = { fromName: name, forwarding: { enabled: false, email: "" }, signature: { enabled: false, text: "" }, autoReply: { enabled: false, subject: "", message: "" } };
-	const finalSettings = { ...defaultSettings, ...settings };
+	const finalSettings = { ...defaultMailboxSettings(email), fromName: name, ...settings };
 	await c.env.BUCKET.put(key, JSON.stringify(finalSettings));
 	const stub = c.env.MAILBOX.get(c.env.MAILBOX.idFromName(email));
 	await stub.getFolders();
@@ -124,6 +263,8 @@ app.get("/api/v1/mailboxes/:mailboxId", async (c) => {
 });
 
 app.put("/api/v1/mailboxes/:mailboxId", async (c) => {
+	const denied = await requireSuperAdmin(c);
+	if (denied) return denied;
 	const mailboxId = c.req.param("mailboxId")!;
 	const { settings } = (await c.req.json()) as { settings: Record<string, unknown> };
 	const key = `mailboxes/${mailboxId}.json`;
@@ -133,6 +274,8 @@ app.put("/api/v1/mailboxes/:mailboxId", async (c) => {
 });
 
 app.delete("/api/v1/mailboxes/:mailboxId", async (c) => {
+	const denied = await requireSuperAdmin(c);
+	if (denied) return denied;
 	const mailboxId = c.req.param("mailboxId")!;
 	const key = `mailboxes/${mailboxId}.json`;
 	if (!(await c.env.BUCKET.head(key))) return c.json({ error: "Not found" }, 404);
@@ -166,52 +309,11 @@ app.get("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 });
 
 app.post("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
-	const mailboxId = c.req.param("mailboxId")!;
-	const body = SendEmailRequestSchema.parse(await c.req.json());
-	const { to, cc, bcc, from, subject, html, text, attachments, in_reply_to, references, thread_id } = body;
-
-	let toStr: string, fromEmail: string, fromDomain: string;
-	try {
-		({ toStr, fromEmail, fromDomain } = validateSender(to, from, mailboxId));
-	} catch (e) {
-		if (e instanceof SenderValidationError) return c.json({ error: e.message }, 400);
-		throw e;
-	}
-
-	const { messageId, outgoingMessageId } = generateMessageId(fromDomain);
-	const stub = c.var.mailboxStub;
-	const rateLimitError = await (stub as any).checkSendRateLimit();
-	if (rateLimitError) return c.json({ error: rateLimitError }, 429);
-	const attachmentData = await storeAttachments(c.env.BUCKET, messageId, attachments);
-
-	await stub.createEmail(Folders.SENT, {
-		id: messageId, subject, sender: fromEmail, recipient: toStr,
-		cc: cc ? (Array.isArray(cc) ? cc.join(", ") : cc).toLowerCase() : null,
-		bcc: bcc ? (Array.isArray(bcc) ? bcc.join(", ") : bcc).toLowerCase() : null,
-		date: new Date().toISOString(), body: html || text || "",
-		in_reply_to: in_reply_to || null, email_references: references ? JSON.stringify(references) : null,
-		thread_id: thread_id || in_reply_to || messageId, message_id: outgoingMessageId,
-		raw_headers: JSON.stringify([
-			{ key: "from", value: typeof from === "string" ? from : `${from.name} <${from.email}>` },
-			{ key: "to", value: Array.isArray(to) ? to.join(", ") : to },
-			...(cc ? [{ key: "cc", value: Array.isArray(cc) ? cc.join(", ") : cc }] : []),
-			...(bcc ? [{ key: "bcc", value: Array.isArray(bcc) ? bcc.join(", ") : bcc }] : []),
-			{ key: "subject", value: subject }, { key: "date", value: new Date().toISOString() },
-			{ key: "message-id", value: `<${outgoingMessageId}>` },
-		]),
-	}, attachmentData);
-
-	c.executionCtx.waitUntil(
-		sendEmail(c.env.EMAIL, {
-			to, cc, bcc, from, subject, html, text,
-			attachments: attachments?.map((att) => ({ content: att.content, filename: att.filename, type: att.type, disposition: att.disposition || "attachment", contentId: att.contentId })),
-			...(in_reply_to ? { headers: buildThreadingHeaders(in_reply_to, references || []) } : {}),
-		}).catch((e) => console.error("Deferred email delivery failed:", (e as Error).message)),
-	);
-	return c.json({ id: messageId, status: "sent" }, 202);
+	return outboundDisabled(c);
 });
 
 app.post("/api/v1/mailboxes/:mailboxId/drafts", async (c: AppContext) => {
+	if (isInboundOnly(c.env)) return outboundDisabled(c);
 	const mailboxId = c.req.param("mailboxId")!;
 	const { to, cc, bcc, subject, body, in_reply_to, thread_id, draft_id } = DraftBody.parse(await c.req.json());
 	const stub = c.var.mailboxStub;
@@ -242,6 +344,8 @@ app.put("/api/v1/mailboxes/:mailboxId/emails/:id", async (c: AppContext) => {
 });
 
 app.delete("/api/v1/mailboxes/:mailboxId/emails/:id", async (c: AppContext) => {
+	const denied = await requireSuperAdmin(c);
+	if (denied) return denied;
 	const id = c.req.param("id")!;
 	const attachments = await c.var.mailboxStub.deleteEmail(id);
 	if (attachments === null) return c.json({ error: "Not found" }, 404);
@@ -250,6 +354,8 @@ app.delete("/api/v1/mailboxes/:mailboxId/emails/:id", async (c: AppContext) => {
 });
 
 app.post("/api/v1/mailboxes/:mailboxId/emails/:id/move", async (c: AppContext) => {
+	const denied = await requireSuperAdmin(c);
+	if (denied) return denied;
 	const { folderId } = (await c.req.json()) as { folderId: string };
 	const success = await c.var.mailboxStub.moveEmail(c.req.param("id")!, folderId);
 	return success ? c.json({ status: "moved" }) : c.json({ error: "Folder not found" }, 400);
@@ -268,14 +374,28 @@ app.post("/api/v1/mailboxes/:mailboxId/threads/:threadId/read", async (c: AppCon
 
 // -- Reply / Forward ------------------------------------------------
 
-app.post("/api/v1/mailboxes/:mailboxId/emails/:id/reply", handleReplyEmail);
-app.post("/api/v1/mailboxes/:mailboxId/emails/:id/forward", handleForwardEmail);
+app.post("/api/v1/mailboxes/:mailboxId/emails/:id/reply", outboundDisabled);
+app.post("/api/v1/mailboxes/:mailboxId/emails/:id/forward", outboundDisabled);
+
+app.post("/api/v1/mailboxes/:mailboxId/content-labels/backfill", async (c: AppContext) => {
+	const mailboxId = c.req.param("mailboxId")!.toLowerCase();
+	const rules = getContentLabelRules(c.env).filter((rule) => rule.mailboxId.toLowerCase() === mailboxId);
+	const stub = c.var.mailboxStub as unknown as {
+		backfillContentLabels: (rules: ContentLabelRule[]) => Promise<unknown>;
+	};
+	return c.json(await stub.backfillContentLabels(rules));
+});
 
 // -- Folders --------------------------------------------------------
 
-app.get("/api/v1/mailboxes/:mailboxId/folders", async (c: AppContext) => c.json(await c.var.mailboxStub.getFolders()));
+app.get("/api/v1/mailboxes/:mailboxId/folders", async (c: AppContext) => {
+	await ensureContentLabelFolders(c.var.mailboxStub, c.env, c.req.param("mailboxId")!.toLowerCase());
+	return c.json(await c.var.mailboxStub.getFolders());
+});
 
 app.post("/api/v1/mailboxes/:mailboxId/folders", async (c: AppContext) => {
+	const denied = await requireSuperAdmin(c);
+	if (denied) return denied;
 	const { name } = (await c.req.json()) as { name: string };
 	const slug = slugify(name);
 	if (!slug) return c.json({ error: "Folder name must contain alphanumeric characters" }, 400);
@@ -284,12 +404,16 @@ app.post("/api/v1/mailboxes/:mailboxId/folders", async (c: AppContext) => {
 });
 
 app.put("/api/v1/mailboxes/:mailboxId/folders/:id", async (c: AppContext) => {
+	const denied = await requireSuperAdmin(c);
+	if (denied) return denied;
 	const { name } = (await c.req.json()) as { name: string };
 	const f = await c.var.mailboxStub.updateFolder(c.req.param("id")!, name);
 	return f ? c.json(f) : c.json({ error: "Folder not found" }, 404);
 });
 
 app.delete("/api/v1/mailboxes/:mailboxId/folders/:id", async (c: AppContext) => {
+	const denied = await requireSuperAdmin(c);
+	if (denied) return denied;
 	const ok = await c.var.mailboxStub.deleteFolder(c.req.param("id")!);
 	return ok ? c.body(null, 204) : c.json({ error: "Folder not found or cannot be deleted" }, 400);
 });
@@ -328,6 +452,50 @@ app.get("/api/v1/mailboxes/:mailboxId/emails/:emailId/attachments/:attachmentId"
 // -- Receive inbound email ------------------------------------------
 
 const MAX_EMAIL_SIZE = 25 * 1024 * 1024;
+const AUTOPROCESS_RECIPIENT = "autoprocess@hyatusliving.com";
+const SIMPLE_AI_STRUCTURED_URL = "https://fast.gptpricing.com/simple-ai/structured";
+const AIRBNB_REVIEW_REMOVED_TEXT_PATTERNS = [
+	"has been removed at their request",
+	"been removed at their request",
+	"has been removed upon their request",
+	"been removed upon their request",
+	"we've removed reviews from your account",
+	"we’ve removed reviews from your account",
+];
+
+interface AirbnbReviewRemovalExtraction {
+	airbnb_channel_reservation_id: string;
+	extraction_purpose: string;
+	review_has_been_removed: boolean;
+}
+
+interface AirbnbReviewRemovalContext {
+	messageId: string;
+	fromAddress: string;
+	toAddress: string;
+	mailboxId: string;
+	subject: string;
+	attachmentFilename?: string;
+}
+
+interface AirbnbReviewRemovalCandidate {
+	emailText: string;
+	context: AirbnbReviewRemovalContext;
+}
+
+type ParsedEmailAttachment = {
+	filename?: string | null;
+	mimeType?: string | null;
+	content: ArrayBuffer | Uint8Array | string;
+};
+
+type ParsedEmailLike = {
+	subject?: string;
+	text?: string;
+	html?: string;
+	from?: { address?: string };
+	attachments?: ParsedEmailAttachment[];
+};
 
 async function streamToArrayBuffer(stream: ReadableStream, streamSize: number) {
 	if (streamSize > MAX_EMAIL_SIZE) throw new Error(`Email too large: ${streamSize} bytes exceeds ${MAX_EMAIL_SIZE} byte limit`);
@@ -345,28 +513,256 @@ async function streamToArrayBuffer(stream: ReadableStream, streamSize: number) {
 	return result;
 }
 
-async function receiveEmail(event: { raw: ReadableStream; rawSize: number }, env: Env, ctx: ExecutionContext) {
-	const rawEmail = await streamToArrayBuffer(event.raw, event.rawSize);
+async function forwardMatchingContentRules(message: ForwardableEmailMessage, env: Env, mailboxId: string, searchText: string) {
+	const rules = getContentForwardRules(env).filter((rule) => rule.mailboxId.toLowerCase() === mailboxId);
+	for (const rule of rules) {
+		if (!new RegExp(rule.pattern, rule.flags ?? "i").test(searchText)) continue;
+		const headers = new Headers();
+		headers.set("X-Hyatus-Forward-Rule", rule.name);
+		headers.set("X-Hyatus-Forward-Source-Mailbox", mailboxId);
+		await message.forward(rule.forwardTo, headers);
+		console.log(`Forwarded ${mailboxId} email by content rule ${rule.name} to ${rule.forwardTo}`);
+	}
+}
+
+function findContentLabelRule(env: Env, mailboxId: string, fromAddress: string, recipientText: string, searchText: string) {
+	const rules = getContentLabelRules(env).filter((rule) => rule.mailboxId.toLowerCase() === mailboxId);
+	return rules.find((rule) => {
+		const flags = rule.flags ?? "i";
+		if (rule.fromPattern && !new RegExp(rule.fromPattern, flags).test(fromAddress)) return false;
+		if (rule.recipientPattern && !new RegExp(rule.recipientPattern, flags).test(recipientText)) return false;
+		return new RegExp(rule.pattern, flags).test(searchText);
+	});
+}
+
+async function ensureContentLabelFolders(stub: { createFolder: (id: string, name: string) => Promise<unknown> }, env: Env, mailboxId: string) {
+	const rules = getContentLabelRules(env).filter((rule) => rule.mailboxId.toLowerCase() === mailboxId);
+	for (const rule of rules) {
+		await stub.createFolder(rule.folderId, rule.folderName ?? rule.folderId);
+	}
+}
+
+async function ensureContentLabelFolder(stub: { createFolder: (id: string, name: string) => Promise<unknown> }, rule: ContentLabelRule | undefined) {
+	if (!rule) return;
+	await stub.createFolder(rule.folderId, rule.folderName ?? rule.folderId);
+}
+
+async function postAutoprocessWebhook(env: Env, rawEmail: Uint8Array, context: {
+	messageId: string;
+	fromAddress: string;
+	toAddress: string;
+	mailboxId: string;
+	subject: string;
+}) {
+	if (!env.AUTOPROCESS_WEBHOOK_URL) throw new Error("AUTOPROCESS_WEBHOOK_URL is required for autoprocess mail");
+	const response = await fetch(env.AUTOPROCESS_WEBHOOK_URL, {
+		method: "POST",
+		headers: {
+			"Content-Type": "message/rfc822",
+			"X-Hyatus-Inbox-Trigger": "autoprocess",
+			"X-Hyatus-Message-Id": context.messageId,
+			"X-Hyatus-Source-Mailbox": context.mailboxId,
+			"X-Hyatus-Recipient": context.toAddress,
+			"X-Hyatus-From": context.fromAddress,
+			"X-Hyatus-Subject": context.subject,
+		},
+		body: rawEmail.slice().buffer,
+	});
+	if (!response.ok) throw new Error(`Autoprocess webhook failed with status ${response.status}`);
+}
+
+function shouldExtractAirbnbReviewRemoval(fromAddress: string, searchText: string) {
+	return fromAddress.includes("airbnb.com")
+		&& AIRBNB_REVIEW_REMOVED_TEXT_PATTERNS.some((pattern) => searchText.toLowerCase().includes(pattern));
+}
+
+function appendStructuredExtractionHeader(rawHeaders: string, extraction: AirbnbReviewRemovalExtraction | AirbnbReviewRemovalExtraction[]) {
+	const headerName = "X-Hyatus-Structured-Extraction";
+	const headerValue = JSON.stringify(Array.isArray(extraction)
+		? { name: "airbnb-review-removal", extractions: extraction }
+		: { name: "airbnb-review-removal", ...extraction });
+	const parsed = JSON.parse(rawHeaders);
+	if (Array.isArray(parsed)) return JSON.stringify([...parsed, { key: headerName, value: headerValue }]);
+	return JSON.stringify({ ...parsed, [headerName]: headerValue });
+}
+
+async function extractAirbnbReviewRemoval(env: Env, emailText: string) {
+	if (!env.SIMPLE_AI_API_KEY) throw new Error("SIMPLE_AI_API_KEY is required for Airbnb review removal extraction");
+	const response = await fetch(env.SIMPLE_AI_STRUCTURED_URL || SIMPLE_AI_STRUCTURED_URL, {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+			"x-api-key": env.SIMPLE_AI_API_KEY,
+		},
+		body: JSON.stringify({
+			provider: "openai",
+			model: "gpt-5-nano",
+			system_prompt: [
+				"You extract structured data from Airbnb review-removal notification emails.",
+				"Return only data supported by the email text.",
+				"If the Airbnb channel reservation ID is missing, return an empty string.",
+				"Treat both reservation-specific messages and Airbnb account-level 'We've removed reviews from your account' notices as review-removal notifications.",
+				"The extraction purpose must be airbnb_review_removal.",
+			].join(" "),
+			user_prompt: emailText,
+			output_schema_json: {
+				type: "object",
+				properties: {
+					airbnb_channel_reservation_id: {
+						type: "string",
+						description: "The Airbnb channel reservation ID from the email.",
+					},
+					extraction_purpose: {
+						type: "string",
+						description: "Always airbnb_review_removal for this extraction.",
+					},
+					review_has_been_removed: {
+						type: "boolean",
+						description: "True when the email says the review has been removed at or upon their request, or Airbnb says it has removed reviews from the account.",
+					},
+				},
+				required: ["airbnb_channel_reservation_id", "extraction_purpose", "review_has_been_removed"],
+				additionalProperties: false,
+			},
+		}),
+	});
+	if (!response.ok) throw new Error(`Simple AI structured extraction failed with status ${response.status}`);
+	const body = await response.json() as { structured_data: AirbnbReviewRemovalExtraction };
+	return body.structured_data;
+}
+
+async function postAirbnbReviewRemoval(env: Env, extraction: AirbnbReviewRemovalExtraction, context: AirbnbReviewRemovalContext) {
+	if (!extraction.review_has_been_removed) return;
+	if (!extraction.airbnb_channel_reservation_id) throw new Error("Airbnb review removal extraction did not include a channel reservation ID");
+	if (!env.AIRBNB_REVIEW_REMOVAL_URL) throw new Error("AIRBNB_REVIEW_REMOVAL_URL is required for Airbnb review removal updates");
+	if (!env.AIRBNB_REVIEW_REMOVAL_API_KEY) throw new Error("AIRBNB_REVIEW_REMOVAL_API_KEY is required for Airbnb review removal updates");
+	const response = await fetch(env.AIRBNB_REVIEW_REMOVAL_URL, {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+			"x-api-key": env.AIRBNB_REVIEW_REMOVAL_API_KEY,
+		},
+		body: JSON.stringify({
+			channel_res_id: extraction.airbnb_channel_reservation_id,
+			extraction_purpose: extraction.extraction_purpose,
+			source_email_id: context.messageId,
+			source_mailbox: context.mailboxId,
+			source_recipient: context.toAddress,
+			source_from: context.fromAddress,
+			source_subject: context.subject,
+			source_attachment_filename: context.attachmentFilename,
+		}),
+	});
+	if (!response.ok) throw new Error(`Airbnb review removal update failed with status ${response.status}`);
+}
+
+async function extractAndStoreAirbnbReviewRemoval(
+	stub: { setEmailRawHeaders: (id: string, rawHeaders: string) => Promise<unknown> },
+	env: Env,
+	emailId: string,
+	rawHeaders: string,
+	candidates: AirbnbReviewRemovalCandidate[],
+) {
+	const extractions: AirbnbReviewRemovalExtraction[] = [];
+	const postedChannelReservationIds = new Set<string>();
+	for (const candidate of candidates) {
+		const extraction = await extractAirbnbReviewRemoval(env, candidate.emailText);
+		if (!extraction.review_has_been_removed) continue;
+		if (!extraction.airbnb_channel_reservation_id) {
+			console.warn(`Skipping Airbnb review removal without channel reservation ID for email ${emailId}`);
+			continue;
+		}
+		if (postedChannelReservationIds.has(extraction.airbnb_channel_reservation_id)) continue;
+		await postAirbnbReviewRemoval(env, extraction, candidate.context);
+		postedChannelReservationIds.add(extraction.airbnb_channel_reservation_id);
+		extractions.push(extraction);
+	}
+	if (!extractions.length) return;
+	await stub.setEmailRawHeaders(emailId, appendStructuredExtractionHeader(rawHeaders, extractions.length === 1 ? extractions[0] : extractions));
+	console.log(`Stored ${extractions.length} Airbnb review removal extraction(s) for email ${emailId}`);
+}
+
+function emailSearchText(email: { subject?: string; text?: string; html?: string }) {
+	return [
+		email.subject || "",
+		email.text || "",
+		email.html || "",
+	].join("\n");
+}
+
+function attachmentBytes(content: ArrayBuffer | Uint8Array | string) {
+	if (typeof content === "string") return new TextEncoder().encode(content);
+	return content instanceof Uint8Array ? content : new Uint8Array(content);
+}
+
+async function getAutoprocessAttachmentCandidates(
+	parsedEmail: ParsedEmailLike,
+	outerContext: AirbnbReviewRemovalContext,
+) {
+	const candidates: AirbnbReviewRemovalCandidate[] = [];
+	for (const attachment of parsedEmail.attachments || []) {
+		const filename = attachment.filename || "attached-email.eml";
+		const mimetype = attachment.mimeType || "";
+		if (mimetype !== "message/rfc822" && !filename.toLowerCase().endsWith(".eml")) continue;
+		const attachedEmail = await new PostalMime().parse(attachmentBytes(attachment.content));
+		const searchText = emailSearchText(attachedEmail);
+		const fromAddress = (attachedEmail.from?.address || "").toLowerCase();
+		if (!shouldExtractAirbnbReviewRemoval(fromAddress, searchText)) continue;
+		candidates.push({
+			emailText: searchText,
+			context: {
+				...outerContext,
+				fromAddress,
+				subject: attachedEmail.subject || "",
+				attachmentFilename: filename,
+			},
+		});
+	}
+	return candidates;
+}
+
+async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: ExecutionContext) {
+	const rawEmail = await streamToArrayBuffer(message.raw, message.rawSize);
 	const parsedEmail = await new PostalMime().parse(rawEmail);
 
-	if (!parsedEmail.to?.length || !parsedEmail.to[0].address) throw new Error("received email with empty to");
+	const envelopeRecipient = message.to.toLowerCase();
 
-	const allowedAddresses = ((env.EMAIL_ADDRESSES ?? []) as string[]).map((a) => a.toLowerCase());
-	const allRecipients = parsedEmail.to.map((t) => t.address?.toLowerCase()).filter(Boolean) as string[];
+	const allowedAddresses = getConfiguredEmailAddresses(env);
+	const parsedToRecipients = (parsedEmail.to || []).map((t) => t.address?.toLowerCase()).filter(Boolean) as string[];
+	const allRecipients = [...new Set([envelopeRecipient, ...parsedToRecipients].filter(Boolean))];
+	if (!allRecipients.length) throw new Error("received email with empty to");
 	const ccRecipients = (parsedEmail.cc || []).map((e) => e.address?.toLowerCase()).filter(Boolean) as string[];
 	const bccRecipients = (parsedEmail.bcc || []).map((e) => e.address?.toLowerCase()).filter(Boolean) as string[];
 
-	let mailboxId: string | undefined;
-	if (allowedAddresses.length > 0) {
-		mailboxId = allRecipients.find((addr) => allowedAddresses.includes(addr));
-		if (!mailboxId) { console.log(`Ignoring email: no recipient matches EMAIL_ADDRESSES.`); return; }
-	} else { mailboxId = allRecipients[0]; }
-	if (!mailboxId) throw new Error("received email with no valid recipient address");
+	const mailboxResolution = allowedAddresses.length > 0
+		? resolveMailboxForRecipients(env, allRecipients)
+		: { recipientAddress: allRecipients[0], mailboxId: allRecipients[0] };
+	if (!mailboxResolution?.mailboxId) {
+		console.log(`Ignoring email: no recipient matches EMAIL_ADDRESSES.`);
+		return;
+	}
+	const mailboxId = mailboxResolution.mailboxId;
+
+	const forwardingSearchText = emailSearchText(parsedEmail);
+	const fromAddress = (parsedEmail.from?.address || "").toLowerCase();
+	ctx.waitUntil(forwardMatchingContentRules(message, env, mailboxId, forwardingSearchText));
+	const recipientSearchText = [...allRecipients, ...ccRecipients, ...bccRecipients].join("\n");
+	const labelRule = findContentLabelRule(env, mailboxId, fromAddress, recipientSearchText, forwardingSearchText);
+	if (labelRule) console.log(`Labeling ${mailboxId} email by content rule ${labelRule.name} into folder ${labelRule.folderId}`);
+	const destinationFolder = labelRule?.folderId ?? Folders.INBOX;
 
 	const messageId = crypto.randomUUID();
-	if (!(await env.BUCKET.head(`mailboxes/${mailboxId}.json`))) { console.log(`Ignoring email for ${mailboxId}: mailbox does not exist`); return; }
+	const mailboxKey = `mailboxes/${mailboxId}.json`;
+	if (!(await env.BUCKET.head(mailboxKey))) {
+		if (!getConfiguredMailboxIds(env).includes(mailboxId)) { console.log(`Ignoring email for ${mailboxId}: mailbox does not exist`); return; }
+		await env.BUCKET.put(mailboxKey, JSON.stringify(defaultMailboxSettings(mailboxId)));
+		const initStub = env.MAILBOX.get(env.MAILBOX.idFromName(mailboxId));
+		await initStub.getFolders();
+		console.log(`Auto-created configured mailbox ${mailboxId}`);
+	}
 
 	const stub = env.MAILBOX.get(env.MAILBOX.idFromName(mailboxId));
+	await ensureContentLabelFolder(stub, labelRule);
 
 	const attachmentData: StoredAttachment[] = [];
 	if (parsedEmail.attachments) {
@@ -391,22 +787,62 @@ async function receiveEmail(event: { raw: ReadableStream; rawSize: number }, env
 	}
 
 	const originalMessageId = parsedEmail.messageId ? extractMsgId(parsedEmail.messageId) : null;
+	const rawHeaders = JSON.stringify(parsedEmail.headers);
 
-	await stub.createEmail(Folders.INBOX, {
+	await stub.createEmail(destinationFolder, {
 		id: messageId, subject: parsedEmail.subject || "",
-		sender: (parsedEmail.from?.address || "").toLowerCase(), recipient: allRecipients.join(", "),
+		sender: fromAddress, recipient: allRecipients.join(", "),
 		cc: ccRecipients.join(", ") || null, bcc: bccRecipients.join(", ") || null,
 		date: new Date().toISOString(), // uses receive time, not the email's Date header
 		body: parsedEmail.html || parsedEmail.text || "",
 		in_reply_to: inReplyTo, email_references: emailReferences.length > 0 ? JSON.stringify(emailReferences) : null,
-		thread_id: threadId, message_id: originalMessageId, raw_headers: JSON.stringify(parsedEmail.headers),
+		thread_id: threadId, message_id: originalMessageId, raw_headers: rawHeaders,
 	}, attachmentData);
 
-	const agentStub = env.EMAIL_AGENT.get(env.EMAIL_AGENT.idFromName(mailboxId));
-	ctx.waitUntil(agentStub.fetch(new Request("https://agents/onNewEmail", {
-		method: "POST", headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ mailboxId, emailId: messageId, sender: (parsedEmail.from?.address || "").toLowerCase(), subject: parsedEmail.subject || "", threadId }),
-	})).catch((e) => console.error("Auto-draft trigger failed:", (e as Error).message)));
+	if (allRecipients.includes(AUTOPROCESS_RECIPIENT)) {
+		ctx.waitUntil(postAutoprocessWebhook(env, rawEmail, {
+			messageId,
+			fromAddress,
+			toAddress: AUTOPROCESS_RECIPIENT,
+			mailboxId,
+			subject: parsedEmail.subject || "",
+		}).catch((e) => console.error("Autoprocess webhook failed:", (e as Error).message)));
+	}
+
+	const baseReviewRemovalContext = {
+		messageId,
+		fromAddress,
+		toAddress: AUTOPROCESS_RECIPIENT,
+		mailboxId,
+		subject: parsedEmail.subject || "",
+	};
+	const reviewRemovalCandidates: AirbnbReviewRemovalCandidate[] = [];
+	if (shouldExtractAirbnbReviewRemoval(fromAddress, forwardingSearchText)) {
+		reviewRemovalCandidates.push({
+			emailText: forwardingSearchText,
+			context: baseReviewRemovalContext,
+		});
+	}
+	if (allRecipients.includes(AUTOPROCESS_RECIPIENT)) {
+		reviewRemovalCandidates.push(...await getAutoprocessAttachmentCandidates(parsedEmail, baseReviewRemovalContext));
+	}
+	if (reviewRemovalCandidates.length) {
+		ctx.waitUntil(extractAndStoreAirbnbReviewRemoval(
+			stub,
+			env,
+			messageId,
+			rawHeaders,
+			reviewRemovalCandidates,
+		).catch((e) => console.error("Airbnb review removal extraction failed:", (e as Error).message)));
+	}
+
+	if (isAutoDraftEnabled(env)) {
+		const agentStub = env.EMAIL_AGENT.get(env.EMAIL_AGENT.idFromName(mailboxId));
+		ctx.waitUntil(agentStub.fetch(new Request("https://agents/onNewEmail", {
+			method: "POST", headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ mailboxId, emailId: messageId, sender: fromAddress, subject: parsedEmail.subject || "", threadId }),
+		})).catch((e) => console.error("Auto-draft trigger failed:", (e as Error).message)));
+	}
 }
 
 export { app, receiveEmail };

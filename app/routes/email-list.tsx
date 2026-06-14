@@ -16,7 +16,7 @@ import {
 	TrashIcon,
 	TrayIcon,
 } from "@phosphor-icons/react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router";
 import { Folders } from "shared/folders";
@@ -32,6 +32,7 @@ import {
 import { useFolders } from "~/queries/folders";
 import { queryKeys } from "~/queries/keys";
 import { useUIStore } from "~/hooks/useUIStore";
+import api from "~/services/api";
 import type { Email } from "~/types";
 
 const PAGE_SIZE = 25;
@@ -49,22 +50,19 @@ const FOLDER_EMPTY_STATES: Record<
 		icon: <TrayIcon size={48} weight="thin" className="text-kumo-subtle" />,
 		title: "Your inbox is empty",
 		description:
-			"New emails will appear here when they arrive. Send an email to get the conversation started.",
-		showCompose: true,
+			"New inbound emails will appear here when they arrive.",
 	},
 	[Folders.SENT]: {
 		icon: (
 			<PaperPlaneTiltIcon size={48} weight="thin" className="text-kumo-subtle" />
 		),
 		title: "No sent emails",
-		description: "Emails you send will show up here.",
-		showCompose: true,
+		description: "Outbound email is disabled for this inbox.",
 	},
 	[Folders.DRAFT]: {
 		icon: <FileIcon size={48} weight="thin" className="text-kumo-subtle" />,
 		title: "No drafts",
-		description: "Emails you're still working on will be saved here.",
-		showCompose: true,
+		description: "Draft creation is disabled for this inbox.",
 	},
 	[Folders.ARCHIVE]: {
 		icon: <ArchiveIcon size={48} weight="thin" className="text-kumo-subtle" />,
@@ -158,6 +156,10 @@ export default function EmailListRoute() {
 	const updateEmail = useUpdateEmail();
 	const markThreadRead = useMarkThreadRead();
 	const deleteEmail = useDeleteEmail();
+	const { data: me } = useQuery({
+		queryKey: queryKeys.me,
+		queryFn: () => api.getMe(),
+	});
 
 	const params = useMemo(
 		() => ({
@@ -422,16 +424,18 @@ export default function EmailListRoute() {
 													aria-label={email.read ? "Mark unread" : "Mark read"}
 												/>
 											</Tooltip>
-											<Tooltip content="Delete" asChild>
-												<Button
-													variant="ghost"
-													shape="square"
-													size="sm"
-													icon={<TrashIcon size={14} />}
-													onClick={(e) => handleDelete(e, email.id)}
-													aria-label="Delete"
-												/>
-											</Tooltip>
+											{me?.isSuperAdmin && (
+												<Tooltip content="Delete" asChild>
+													<Button
+														variant="ghost"
+														shape="square"
+														size="sm"
+														icon={<TrashIcon size={14} />}
+														onClick={(e) => handleDelete(e, email.id)}
+														aria-label="Delete"
+													/>
+												</Tooltip>
+											)}
 										</div>
 									</div>
 								);
