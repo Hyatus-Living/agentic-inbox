@@ -41,10 +41,25 @@
 				"pattern": "\\b(?:Guest review removed|Customer Review Removal)\\b",
 				"flags": "i",
 				"forwardTo": "autoprocess@hyatusliving.com"
+			},
+			{
+				"name": "vrbo-review-removal",
+				"mailboxId": "ai@hyatusliving.com",
+				"pattern": "\\b(?:review was taken down|review removed|review has been removed|taken down from VRBO)\\b",
+				"flags": "i",
+				"forwardTo": "autoprocess@hyatusliving.com"
+			},
+			{
+				"name": "booking-review-removal",
+				"mailboxId": "ai@hyatusliving.com",
+				"pattern": "\\b(?:review removed|removed review|guest review removed|review has been removed|review was removed|customer review removal)\\b",
+				"flags": "i",
+				"forwardTo": "autoprocess@hyatusliving.com"
 			}
 		],
 		"OPENAI_MODEL": "gpt-4.1-mini",
 		"SIMPLE_AI_STRUCTURED_URL": "https://fast.gptpricing.com/simple-ai/structured",
+		"REVIEW_REMOVAL_URL": "https://gn6slmok95.execute-api.us-east-1.amazonaws.com/dev/admin-api/review-removal",
 		"AIRBNB_REVIEW_REMOVAL_URL": "https://gn6slmok95.execute-api.us-east-1.amazonaws.com/dev/admin-api/airbnb-review-removal",
 		"CONTENT_LABEL_RULES": [
 			{

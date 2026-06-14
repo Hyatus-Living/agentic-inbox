@@ -8,5 +8,6 @@ export interface Env extends Cloudflare.Env {
 	OPENAI_API_KEY: string;
 	AUTOPROCESS_WEBHOOK_URL?: string;
 	SIMPLE_AI_API_KEY?: string;
+	REVIEW_REMOVAL_API_KEY?: string;
 	AIRBNB_REVIEW_REMOVAL_API_KEY?: string;
 }

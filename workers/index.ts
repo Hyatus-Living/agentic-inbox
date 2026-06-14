@@ -454,22 +454,32 @@ app.get("/api/v1/mailboxes/:mailboxId/emails/:emailId/attachments/:attachmentId"
 const MAX_EMAIL_SIZE = 25 * 1024 * 1024;
 const AUTOPROCESS_RECIPIENT = "autoprocess@hyatusliving.com";
 const SIMPLE_AI_STRUCTURED_URL = "https://fast.gptpricing.com/simple-ai/structured";
-const AIRBNB_REVIEW_REMOVED_TEXT_PATTERNS = [
+const REVIEW_REMOVAL_TEXT_PATTERNS = [
 	"has been removed at their request",
 	"been removed at their request",
 	"has been removed upon their request",
 	"been removed upon their request",
 	"we've removed reviews from your account",
 	"we’ve removed reviews from your account",
+	"guest review removed",
+	"customer review removal",
+	"review was taken down",
+	"review removed",
+	"removed review",
+	"review has been removed",
+	"review was removed",
+	"taken down from vrbo",
 ];
 
-interface AirbnbReviewRemovalExtraction {
-	airbnb_channel_reservation_id: string;
+interface ReviewRemovalExtraction {
+	channel: string;
+	channel_reservation_id: string;
+	review_reference: string;
 	extraction_purpose: string;
 	review_has_been_removed: boolean;
 }
 
-interface AirbnbReviewRemovalContext {
+interface ReviewRemovalContext {
 	messageId: string;
 	fromAddress: string;
 	toAddress: string;
@@ -478,9 +488,9 @@ interface AirbnbReviewRemovalContext {
 	attachmentFilename?: string;
 }
 
-interface AirbnbReviewRemovalCandidate {
+interface ReviewRemovalCandidate {
 	emailText: string;
-	context: AirbnbReviewRemovalContext;
+	context: ReviewRemovalContext;
 }
 
 type ParsedEmailAttachment = {
@@ -571,23 +581,38 @@ async function postAutoprocessWebhook(env: Env, rawEmail: Uint8Array, context: {
 	if (!response.ok) throw new Error(`Autoprocess webhook failed with status ${response.status}`);
 }
 
-function shouldExtractAirbnbReviewRemoval(fromAddress: string, searchText: string) {
-	return fromAddress.includes("airbnb.com")
-		&& AIRBNB_REVIEW_REMOVED_TEXT_PATTERNS.some((pattern) => searchText.toLowerCase().includes(pattern));
+function shouldExtractReviewRemoval(fromAddress: string, searchText: string, allowAutoprocessForward = false) {
+	const normalizedText = searchText.toLowerCase();
+	const normalizedFrom = fromAddress.toLowerCase();
+	const matchesRemovalText = REVIEW_REMOVAL_TEXT_PATTERNS.some((pattern) => normalizedText.includes(pattern));
+	if (!matchesRemovalText) return false;
+	if (allowAutoprocessForward) return true;
+	return [
+		"airbnb.com",
+		"booking.com",
+		"partners.booking.com",
+		"mchat.booking.com",
+		"expedia.com",
+		"expediapartnercentral.com",
+		"partnercentral",
+		"homeaway.com",
+		"rentalsunited.com",
+		"vrbo",
+	].some((sender) => normalizedFrom.includes(sender));
 }
 
-function appendStructuredExtractionHeader(rawHeaders: string, extraction: AirbnbReviewRemovalExtraction | AirbnbReviewRemovalExtraction[]) {
+function appendStructuredExtractionHeader(rawHeaders: string, extraction: ReviewRemovalExtraction | ReviewRemovalExtraction[]) {
 	const headerName = "X-Hyatus-Structured-Extraction";
 	const headerValue = JSON.stringify(Array.isArray(extraction)
-		? { name: "airbnb-review-removal", extractions: extraction }
-		: { name: "airbnb-review-removal", ...extraction });
+		? { name: "review-removal", extractions: extraction }
+		: { name: "review-removal", ...extraction });
 	const parsed = JSON.parse(rawHeaders);
 	if (Array.isArray(parsed)) return JSON.stringify([...parsed, { key: headerName, value: headerValue }]);
 	return JSON.stringify({ ...parsed, [headerName]: headerValue });
 }
 
-async function extractAirbnbReviewRemoval(env: Env, emailText: string) {
-	if (!env.SIMPLE_AI_API_KEY) throw new Error("SIMPLE_AI_API_KEY is required for Airbnb review removal extraction");
+async function extractReviewRemoval(env: Env, emailText: string) {
+	if (!env.SIMPLE_AI_API_KEY) throw new Error("SIMPLE_AI_API_KEY is required for review removal extraction");
 	const response = await fetch(env.SIMPLE_AI_STRUCTURED_URL || SIMPLE_AI_STRUCTURED_URL, {
 		method: "POST",
 		headers: {
@@ -598,52 +623,68 @@ async function extractAirbnbReviewRemoval(env: Env, emailText: string) {
 			provider: "openai",
 			model: "gpt-5-nano",
 			system_prompt: [
-				"You extract structured data from Airbnb review-removal notification emails.",
+				"You extract structured data from review-removal notification emails for Airbnb, Booking.com, Expedia Partner Central, Vrbo, HomeAway, and Rentals United.",
 				"Return only data supported by the email text.",
-				"If the Airbnb channel reservation ID is missing, return an empty string.",
-				"Treat both reservation-specific messages and Airbnb account-level 'We've removed reviews from your account' notices as review-removal notifications.",
-				"The extraction purpose must be airbnb_review_removal.",
+				"Use channel values airbnb, booking, expedia, vrbo, or unknown.",
+				"Extract the booking channel reservation ID or review/reservation reference from the email.",
+				"Do not use support case numbers as review references.",
+				"If the email has one reservation or review reference, put the same value in channel_reservation_id and review_reference.",
+				"Treat account-level Airbnb 'We've removed reviews from your account' notices as review-removal notifications.",
+				"The extraction purpose must be review_removal.",
 			].join(" "),
 			user_prompt: emailText,
 			output_schema_json: {
 				type: "object",
 				properties: {
-					airbnb_channel_reservation_id: {
+					channel: {
 						type: "string",
-						description: "The Airbnb channel reservation ID from the email.",
+						description: "The review channel: airbnb, booking, expedia, vrbo, or unknown.",
+					},
+					channel_reservation_id: {
+						type: "string",
+						description: "The channel reservation ID or reservation reference from the email.",
+					},
+					review_reference: {
+						type: "string",
+						description: "The best review or reservation reference to map to the reviews table.",
 					},
 					extraction_purpose: {
 						type: "string",
-						description: "Always airbnb_review_removal for this extraction.",
+						description: "Always review_removal for this extraction.",
 					},
 					review_has_been_removed: {
 						type: "boolean",
-						description: "True when the email says the review has been removed at or upon their request, or Airbnb says it has removed reviews from the account.",
+						description: "True when the email says a guest/customer review has been removed, taken down, or removed from the account.",
 					},
 				},
-				required: ["airbnb_channel_reservation_id", "extraction_purpose", "review_has_been_removed"],
+				required: ["channel", "channel_reservation_id", "review_reference", "extraction_purpose", "review_has_been_removed"],
 				additionalProperties: false,
 			},
 		}),
 	});
 	if (!response.ok) throw new Error(`Simple AI structured extraction failed with status ${response.status}`);
-	const body = await response.json() as { structured_data: AirbnbReviewRemovalExtraction };
+	const body = await response.json() as { structured_data: ReviewRemovalExtraction };
 	return body.structured_data;
 }
 
-async function postAirbnbReviewRemoval(env: Env, extraction: AirbnbReviewRemovalExtraction, context: AirbnbReviewRemovalContext) {
+async function postReviewRemoval(env: Env, extraction: ReviewRemovalExtraction, context: ReviewRemovalContext) {
 	if (!extraction.review_has_been_removed) return;
-	if (!extraction.airbnb_channel_reservation_id) throw new Error("Airbnb review removal extraction did not include a channel reservation ID");
-	if (!env.AIRBNB_REVIEW_REMOVAL_URL) throw new Error("AIRBNB_REVIEW_REMOVAL_URL is required for Airbnb review removal updates");
-	if (!env.AIRBNB_REVIEW_REMOVAL_API_KEY) throw new Error("AIRBNB_REVIEW_REMOVAL_API_KEY is required for Airbnb review removal updates");
-	const response = await fetch(env.AIRBNB_REVIEW_REMOVAL_URL, {
+	const reviewReference = extraction.channel_reservation_id || extraction.review_reference;
+	if (!reviewReference) throw new Error("Review removal extraction did not include a channel reservation ID or review reference");
+	const reviewRemovalUrl = env.REVIEW_REMOVAL_URL || env.AIRBNB_REVIEW_REMOVAL_URL;
+	const reviewRemovalApiKey = env.REVIEW_REMOVAL_API_KEY || env.AIRBNB_REVIEW_REMOVAL_API_KEY;
+	if (!reviewRemovalUrl) throw new Error("REVIEW_REMOVAL_URL is required for review removal updates");
+	if (!reviewRemovalApiKey) throw new Error("REVIEW_REMOVAL_API_KEY is required for review removal updates");
+	const response = await fetch(reviewRemovalUrl, {
 		method: "POST",
 		headers: {
 			"Content-Type": "application/json",
-			"x-api-key": env.AIRBNB_REVIEW_REMOVAL_API_KEY,
+			"x-api-key": reviewRemovalApiKey,
 		},
 		body: JSON.stringify({
-			channel_res_id: extraction.airbnb_channel_reservation_id,
+			channel: extraction.channel,
+			channel_res_id: extraction.channel_reservation_id || extraction.review_reference,
+			review_reference: extraction.review_reference || extraction.channel_reservation_id,
 			extraction_purpose: extraction.extraction_purpose,
 			source_email_id: context.messageId,
 			source_mailbox: context.mailboxId,
@@ -653,33 +694,34 @@ async function postAirbnbReviewRemoval(env: Env, extraction: AirbnbReviewRemoval
 			source_attachment_filename: context.attachmentFilename,
 		}),
 	});
-	if (!response.ok) throw new Error(`Airbnb review removal update failed with status ${response.status}`);
+	if (!response.ok) throw new Error(`Review removal update failed with status ${response.status}`);
 }
 
-async function extractAndStoreAirbnbReviewRemoval(
+async function extractAndStoreReviewRemoval(
 	stub: { setEmailRawHeaders: (id: string, rawHeaders: string) => Promise<unknown> },
 	env: Env,
 	emailId: string,
 	rawHeaders: string,
-	candidates: AirbnbReviewRemovalCandidate[],
+	candidates: ReviewRemovalCandidate[],
 ) {
-	const extractions: AirbnbReviewRemovalExtraction[] = [];
-	const postedChannelReservationIds = new Set<string>();
+	const extractions: ReviewRemovalExtraction[] = [];
+	const postedReviewReferences = new Set<string>();
 	for (const candidate of candidates) {
-		const extraction = await extractAirbnbReviewRemoval(env, candidate.emailText);
+		const extraction = await extractReviewRemoval(env, candidate.emailText);
 		if (!extraction.review_has_been_removed) continue;
-		if (!extraction.airbnb_channel_reservation_id) {
-			console.warn(`Skipping Airbnb review removal without channel reservation ID for email ${emailId}`);
+		const reviewReference = extraction.channel_reservation_id || extraction.review_reference;
+		if (!reviewReference) {
+			console.warn(`Skipping review removal without channel reservation ID or review reference for email ${emailId}`);
 			continue;
 		}
-		if (postedChannelReservationIds.has(extraction.airbnb_channel_reservation_id)) continue;
-		await postAirbnbReviewRemoval(env, extraction, candidate.context);
-		postedChannelReservationIds.add(extraction.airbnb_channel_reservation_id);
+		if (postedReviewReferences.has(reviewReference)) continue;
+		await postReviewRemoval(env, extraction, candidate.context);
+		postedReviewReferences.add(reviewReference);
 		extractions.push(extraction);
 	}
 	if (!extractions.length) return;
 	await stub.setEmailRawHeaders(emailId, appendStructuredExtractionHeader(rawHeaders, extractions.length === 1 ? extractions[0] : extractions));
-	console.log(`Stored ${extractions.length} Airbnb review removal extraction(s) for email ${emailId}`);
+	console.log(`Stored ${extractions.length} review removal extraction(s) for email ${emailId}`);
 }
 
 function emailSearchText(email: { subject?: string; text?: string; html?: string }) {
@@ -697,9 +739,9 @@ function attachmentBytes(content: ArrayBuffer | Uint8Array | string) {
 
 async function getAutoprocessAttachmentCandidates(
 	parsedEmail: ParsedEmailLike,
-	outerContext: AirbnbReviewRemovalContext,
+	outerContext: ReviewRemovalContext,
 ) {
-	const candidates: AirbnbReviewRemovalCandidate[] = [];
+	const candidates: ReviewRemovalCandidate[] = [];
 	for (const attachment of parsedEmail.attachments || []) {
 		const filename = attachment.filename || "attached-email.eml";
 		const mimetype = attachment.mimeType || "";
@@ -707,7 +749,7 @@ async function getAutoprocessAttachmentCandidates(
 		const attachedEmail = await new PostalMime().parse(attachmentBytes(attachment.content));
 		const searchText = emailSearchText(attachedEmail);
 		const fromAddress = (attachedEmail.from?.address || "").toLowerCase();
-		if (!shouldExtractAirbnbReviewRemoval(fromAddress, searchText)) continue;
+		if (!shouldExtractReviewRemoval(fromAddress, searchText, true)) continue;
 		candidates.push({
 			emailText: searchText,
 			context: {
@@ -816,8 +858,8 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 		mailboxId,
 		subject: parsedEmail.subject || "",
 	};
-	const reviewRemovalCandidates: AirbnbReviewRemovalCandidate[] = [];
-	if (shouldExtractAirbnbReviewRemoval(fromAddress, forwardingSearchText)) {
+	const reviewRemovalCandidates: ReviewRemovalCandidate[] = [];
+	if (shouldExtractReviewRemoval(fromAddress, forwardingSearchText, allRecipients.includes(AUTOPROCESS_RECIPIENT))) {
 		reviewRemovalCandidates.push({
 			emailText: forwardingSearchText,
 			context: baseReviewRemovalContext,
@@ -827,13 +869,13 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 		reviewRemovalCandidates.push(...await getAutoprocessAttachmentCandidates(parsedEmail, baseReviewRemovalContext));
 	}
 	if (reviewRemovalCandidates.length) {
-		ctx.waitUntil(extractAndStoreAirbnbReviewRemoval(
+		ctx.waitUntil(extractAndStoreReviewRemoval(
 			stub,
 			env,
 			messageId,
 			rawHeaders,
 			reviewRemovalCandidates,
-		).catch((e) => console.error("Airbnb review removal extraction failed:", (e as Error).message)));
+		).catch((e) => console.error("Review removal extraction failed:", (e as Error).message)));
 	}
 
 	if (isAutoDraftEnabled(env)) {
