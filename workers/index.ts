@@ -525,12 +525,16 @@ async function streamToArrayBuffer(stream: ReadableStream, streamSize: number) {
 
 async function forwardMatchingContentRules(message: ForwardableEmailMessage, env: Env, mailboxId: string, searchText: string) {
 	const rules = getContentForwardRules(env).filter((rule) => rule.mailboxId.toLowerCase() === mailboxId);
+	const forwardedDestinations = new Set<string>();
 	for (const rule of rules) {
 		if (!new RegExp(rule.pattern, rule.flags ?? "i").test(searchText)) continue;
+		const forwardTo = rule.forwardTo.toLowerCase();
+		if (forwardedDestinations.has(forwardTo)) continue;
 		const headers = new Headers();
 		headers.set("X-Hyatus-Forward-Rule", rule.name);
 		headers.set("X-Hyatus-Forward-Source-Mailbox", mailboxId);
 		await message.forward(rule.forwardTo, headers);
+		forwardedDestinations.add(forwardTo);
 		console.log(`Forwarded ${mailboxId} email by content rule ${rule.name} to ${rule.forwardTo}`);
 	}
 }
@@ -628,6 +632,8 @@ async function extractReviewRemoval(env: Env, emailText: string) {
 				"Use channel values airbnb, booking, expedia, vrbo, or unknown.",
 				"Extract the booking channel reservation ID or review/reservation reference from the email.",
 				"Do not use support case numbers as review references.",
+				"For Expedia, do not use hotel IDs, property IDs, listing IDs, or case IDs as review references; use only unique booking, reservation, itinerary, or review references.",
+				"If the email confirms a removed review but contains no unique booking, reservation, itinerary, or review reference, return empty strings for channel_reservation_id and review_reference.",
 				"If the email has one reservation or review reference, put the same value in channel_reservation_id and review_reference.",
 				"Treat account-level Airbnb 'We've removed reviews from your account' notices as review-removal notifications.",
 				"The extraction purpose must be review_removal.",
