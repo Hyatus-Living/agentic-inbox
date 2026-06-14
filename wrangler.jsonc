@@ -21,14 +21,41 @@
 		// TEAM_DOMAIN may be the base Access URL or the full /cdn-cgi/access/certs URL.
 		// The worker now fails closed outside local development if Access is not configured.
 		"DOMAINS": "hyatusliving.com",
-		"EMAIL_ADDRESSES": ["ai@hyatusliving.com", "codex@hyatusliving.com", "claude@hyatusliving.com"],
+		"EMAIL_ADDRESSES": ["ai@hyatusliving.com", "codex@hyatusliving.com", "claude@hyatusliving.com", "autoprocess@hyatusliving.com"],
 		"EMAIL_ADDRESS_ALIASES": {
 			"codex@hyatusliving.com": "ai@hyatusliving.com",
-			"claude@hyatusliving.com": "ai@hyatusliving.com"
+			"claude@hyatusliving.com": "ai@hyatusliving.com",
+			"autoprocess@hyatusliving.com": "ai@hyatusliving.com"
 		},
-		"CONTENT_FORWARD_RULES": [],
+		"CONTENT_FORWARD_RULES": [
+			{
+				"name": "airbnb-review-removal",
+				"mailboxId": "ai@hyatusliving.com",
+				"pattern": "\\b(?:has been removed at their request|been removed at their request|has been removed upon their request|been removed upon their request|we['’]ve removed reviews from your account)\\b",
+				"flags": "i",
+				"forwardTo": "autoprocess@hyatusliving.com"
+			},
+			{
+				"name": "expedia-partner-central-review-removal",
+				"mailboxId": "ai@hyatusliving.com",
+				"pattern": "\\b(?:Guest review removed|Customer Review Removal)\\b",
+				"flags": "i",
+				"forwardTo": "autoprocess@hyatusliving.com"
+			}
+		],
 		"OPENAI_MODEL": "gpt-4.1-mini",
+		"SIMPLE_AI_STRUCTURED_URL": "https://fast.gptpricing.com/simple-ai/structured",
+		"AIRBNB_REVIEW_REMOVAL_URL": "https://gn6slmok95.execute-api.us-east-1.amazonaws.com/dev/admin-api/airbnb-review-removal",
 		"CONTENT_LABEL_RULES": [
+			{
+				"name": "autoprocess-inbound",
+				"mailboxId": "ai@hyatusliving.com",
+				"recipientPattern": "^autoprocess@hyatusliving\\.com$",
+				"pattern": "[\\s\\S]*",
+				"flags": "i",
+				"folderId": "autoprocess",
+				"folderName": "Auto Process"
+			},
 			{
 				"name": "openai-chatgpt-two-fa",
 				"mailboxId": "ai@hyatusliving.com",

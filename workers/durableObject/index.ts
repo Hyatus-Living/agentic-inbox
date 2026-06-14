@@ -527,6 +527,14 @@ export class MailboxDO extends DurableObject<Env> {
 		return this.getEmail(id);
 	}
 
+	async setEmailRawHeaders(id: string, rawHeaders: string) {
+		this.db
+			.update(schema.emails)
+			.set({ raw_headers: rawHeaders })
+			.where(eq(schema.emails.id, id))
+			.run();
+	}
+
 	async markThreadRead(threadId: string) {
 		this.ctx.storage.sql.exec(
 			`UPDATE emails SET read = 1 WHERE thread_id = ? AND read = 0`,

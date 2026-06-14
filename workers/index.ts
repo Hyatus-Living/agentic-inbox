@@ -452,6 +452,50 @@ app.get("/api/v1/mailboxes/:mailboxId/emails/:emailId/attachments/:attachmentId"
 // -- Receive inbound email ------------------------------------------
 
 const MAX_EMAIL_SIZE = 25 * 1024 * 1024;
+const AUTOPROCESS_RECIPIENT = "autoprocess@hyatusliving.com";
+const SIMPLE_AI_STRUCTURED_URL = "https://fast.gptpricing.com/simple-ai/structured";
+const AIRBNB_REVIEW_REMOVED_TEXT_PATTERNS = [
+	"has been removed at their request",
+	"been removed at their request",
+	"has been removed upon their request",
+	"been removed upon their request",
+	"we've removed reviews from your account",
+	"we’ve removed reviews from your account",
+];
+
+interface AirbnbReviewRemovalExtraction {
+	airbnb_channel_reservation_id: string;
+	extraction_purpose: string;
+	review_has_been_removed: boolean;
+}
+
+interface AirbnbReviewRemovalContext {
+	messageId: string;
+	fromAddress: string;
+	toAddress: string;
+	mailboxId: string;
+	subject: string;
+	attachmentFilename?: string;
+}
+
+interface AirbnbReviewRemovalCandidate {
+	emailText: string;
+	context: AirbnbReviewRemovalContext;
+}
+
+type ParsedEmailAttachment = {
+	filename?: string | null;
+	mimeType?: string | null;
+	content: ArrayBuffer | Uint8Array | string;
+};
+
+type ParsedEmailLike = {
+	subject?: string;
+	text?: string;
+	html?: string;
+	from?: { address?: string };
+	attachments?: ParsedEmailAttachment[];
+};
 
 async function streamToArrayBuffer(stream: ReadableStream, streamSize: number) {
 	if (streamSize > MAX_EMAIL_SIZE) throw new Error(`Email too large: ${streamSize} bytes exceeds ${MAX_EMAIL_SIZE} byte limit`);
@@ -481,11 +525,12 @@ async function forwardMatchingContentRules(message: ForwardableEmailMessage, env
 	}
 }
 
-function findContentLabelRule(env: Env, mailboxId: string, fromAddress: string, searchText: string) {
+function findContentLabelRule(env: Env, mailboxId: string, fromAddress: string, recipientText: string, searchText: string) {
 	const rules = getContentLabelRules(env).filter((rule) => rule.mailboxId.toLowerCase() === mailboxId);
 	return rules.find((rule) => {
 		const flags = rule.flags ?? "i";
 		if (rule.fromPattern && !new RegExp(rule.fromPattern, flags).test(fromAddress)) return false;
+		if (rule.recipientPattern && !new RegExp(rule.recipientPattern, flags).test(recipientText)) return false;
 		return new RegExp(rule.pattern, flags).test(searchText);
 	});
 }
@@ -502,14 +547,190 @@ async function ensureContentLabelFolder(stub: { createFolder: (id: string, name:
 	await stub.createFolder(rule.folderId, rule.folderName ?? rule.folderId);
 }
 
+async function postAutoprocessWebhook(env: Env, rawEmail: Uint8Array, context: {
+	messageId: string;
+	fromAddress: string;
+	toAddress: string;
+	mailboxId: string;
+	subject: string;
+}) {
+	if (!env.AUTOPROCESS_WEBHOOK_URL) throw new Error("AUTOPROCESS_WEBHOOK_URL is required for autoprocess mail");
+	const response = await fetch(env.AUTOPROCESS_WEBHOOK_URL, {
+		method: "POST",
+		headers: {
+			"Content-Type": "message/rfc822",
+			"X-Hyatus-Inbox-Trigger": "autoprocess",
+			"X-Hyatus-Message-Id": context.messageId,
+			"X-Hyatus-Source-Mailbox": context.mailboxId,
+			"X-Hyatus-Recipient": context.toAddress,
+			"X-Hyatus-From": context.fromAddress,
+			"X-Hyatus-Subject": context.subject,
+		},
+		body: rawEmail.slice().buffer,
+	});
+	if (!response.ok) throw new Error(`Autoprocess webhook failed with status ${response.status}`);
+}
+
+function shouldExtractAirbnbReviewRemoval(fromAddress: string, searchText: string) {
+	return fromAddress.includes("airbnb.com")
+		&& AIRBNB_REVIEW_REMOVED_TEXT_PATTERNS.some((pattern) => searchText.toLowerCase().includes(pattern));
+}
+
+function appendStructuredExtractionHeader(rawHeaders: string, extraction: AirbnbReviewRemovalExtraction | AirbnbReviewRemovalExtraction[]) {
+	const headerName = "X-Hyatus-Structured-Extraction";
+	const headerValue = JSON.stringify(Array.isArray(extraction)
+		? { name: "airbnb-review-removal", extractions: extraction }
+		: { name: "airbnb-review-removal", ...extraction });
+	const parsed = JSON.parse(rawHeaders);
+	if (Array.isArray(parsed)) return JSON.stringify([...parsed, { key: headerName, value: headerValue }]);
+	return JSON.stringify({ ...parsed, [headerName]: headerValue });
+}
+
+async function extractAirbnbReviewRemoval(env: Env, emailText: string) {
+	if (!env.SIMPLE_AI_API_KEY) throw new Error("SIMPLE_AI_API_KEY is required for Airbnb review removal extraction");
+	const response = await fetch(env.SIMPLE_AI_STRUCTURED_URL || SIMPLE_AI_STRUCTURED_URL, {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+			"x-api-key": env.SIMPLE_AI_API_KEY,
+		},
+		body: JSON.stringify({
+			provider: "openai",
+			model: "gpt-5-nano",
+			system_prompt: [
+				"You extract structured data from Airbnb review-removal notification emails.",
+				"Return only data supported by the email text.",
+				"If the Airbnb channel reservation ID is missing, return an empty string.",
+				"Treat both reservation-specific messages and Airbnb account-level 'We've removed reviews from your account' notices as review-removal notifications.",
+				"The extraction purpose must be airbnb_review_removal.",
+			].join(" "),
+			user_prompt: emailText,
+			output_schema_json: {
+				type: "object",
+				properties: {
+					airbnb_channel_reservation_id: {
+						type: "string",
+						description: "The Airbnb channel reservation ID from the email.",
+					},
+					extraction_purpose: {
+						type: "string",
+						description: "Always airbnb_review_removal for this extraction.",
+					},
+					review_has_been_removed: {
+						type: "boolean",
+						description: "True when the email says the review has been removed at or upon their request, or Airbnb says it has removed reviews from the account.",
+					},
+				},
+				required: ["airbnb_channel_reservation_id", "extraction_purpose", "review_has_been_removed"],
+				additionalProperties: false,
+			},
+		}),
+	});
+	if (!response.ok) throw new Error(`Simple AI structured extraction failed with status ${response.status}`);
+	const body = await response.json() as { structured_data: AirbnbReviewRemovalExtraction };
+	return body.structured_data;
+}
+
+async function postAirbnbReviewRemoval(env: Env, extraction: AirbnbReviewRemovalExtraction, context: AirbnbReviewRemovalContext) {
+	if (!extraction.review_has_been_removed) return;
+	if (!extraction.airbnb_channel_reservation_id) throw new Error("Airbnb review removal extraction did not include a channel reservation ID");
+	if (!env.AIRBNB_REVIEW_REMOVAL_URL) throw new Error("AIRBNB_REVIEW_REMOVAL_URL is required for Airbnb review removal updates");
+	if (!env.AIRBNB_REVIEW_REMOVAL_API_KEY) throw new Error("AIRBNB_REVIEW_REMOVAL_API_KEY is required for Airbnb review removal updates");
+	const response = await fetch(env.AIRBNB_REVIEW_REMOVAL_URL, {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+			"x-api-key": env.AIRBNB_REVIEW_REMOVAL_API_KEY,
+		},
+		body: JSON.stringify({
+			channel_res_id: extraction.airbnb_channel_reservation_id,
+			extraction_purpose: extraction.extraction_purpose,
+			source_email_id: context.messageId,
+			source_mailbox: context.mailboxId,
+			source_recipient: context.toAddress,
+			source_from: context.fromAddress,
+			source_subject: context.subject,
+			source_attachment_filename: context.attachmentFilename,
+		}),
+	});
+	if (!response.ok) throw new Error(`Airbnb review removal update failed with status ${response.status}`);
+}
+
+async function extractAndStoreAirbnbReviewRemoval(
+	stub: { setEmailRawHeaders: (id: string, rawHeaders: string) => Promise<unknown> },
+	env: Env,
+	emailId: string,
+	rawHeaders: string,
+	candidates: AirbnbReviewRemovalCandidate[],
+) {
+	const extractions: AirbnbReviewRemovalExtraction[] = [];
+	const postedChannelReservationIds = new Set<string>();
+	for (const candidate of candidates) {
+		const extraction = await extractAirbnbReviewRemoval(env, candidate.emailText);
+		if (!extraction.review_has_been_removed) continue;
+		if (!extraction.airbnb_channel_reservation_id) {
+			console.warn(`Skipping Airbnb review removal without channel reservation ID for email ${emailId}`);
+			continue;
+		}
+		if (postedChannelReservationIds.has(extraction.airbnb_channel_reservation_id)) continue;
+		await postAirbnbReviewRemoval(env, extraction, candidate.context);
+		postedChannelReservationIds.add(extraction.airbnb_channel_reservation_id);
+		extractions.push(extraction);
+	}
+	if (!extractions.length) return;
+	await stub.setEmailRawHeaders(emailId, appendStructuredExtractionHeader(rawHeaders, extractions.length === 1 ? extractions[0] : extractions));
+	console.log(`Stored ${extractions.length} Airbnb review removal extraction(s) for email ${emailId}`);
+}
+
+function emailSearchText(email: { subject?: string; text?: string; html?: string }) {
+	return [
+		email.subject || "",
+		email.text || "",
+		email.html || "",
+	].join("\n");
+}
+
+function attachmentBytes(content: ArrayBuffer | Uint8Array | string) {
+	if (typeof content === "string") return new TextEncoder().encode(content);
+	return content instanceof Uint8Array ? content : new Uint8Array(content);
+}
+
+async function getAutoprocessAttachmentCandidates(
+	parsedEmail: ParsedEmailLike,
+	outerContext: AirbnbReviewRemovalContext,
+) {
+	const candidates: AirbnbReviewRemovalCandidate[] = [];
+	for (const attachment of parsedEmail.attachments || []) {
+		const filename = attachment.filename || "attached-email.eml";
+		const mimetype = attachment.mimeType || "";
+		if (mimetype !== "message/rfc822" && !filename.toLowerCase().endsWith(".eml")) continue;
+		const attachedEmail = await new PostalMime().parse(attachmentBytes(attachment.content));
+		const searchText = emailSearchText(attachedEmail);
+		const fromAddress = (attachedEmail.from?.address || "").toLowerCase();
+		if (!shouldExtractAirbnbReviewRemoval(fromAddress, searchText)) continue;
+		candidates.push({
+			emailText: searchText,
+			context: {
+				...outerContext,
+				fromAddress,
+				subject: attachedEmail.subject || "",
+				attachmentFilename: filename,
+			},
+		});
+	}
+	return candidates;
+}
+
 async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: ExecutionContext) {
 	const rawEmail = await streamToArrayBuffer(message.raw, message.rawSize);
 	const parsedEmail = await new PostalMime().parse(rawEmail);
 
-	if (!parsedEmail.to?.length || !parsedEmail.to[0].address) throw new Error("received email with empty to");
+	const envelopeRecipient = message.to.toLowerCase();
 
 	const allowedAddresses = getConfiguredEmailAddresses(env);
-	const allRecipients = parsedEmail.to.map((t) => t.address?.toLowerCase()).filter(Boolean) as string[];
+	const parsedToRecipients = (parsedEmail.to || []).map((t) => t.address?.toLowerCase()).filter(Boolean) as string[];
+	const allRecipients = [...new Set([envelopeRecipient, ...parsedToRecipients].filter(Boolean))];
+	if (!allRecipients.length) throw new Error("received email with empty to");
 	const ccRecipients = (parsedEmail.cc || []).map((e) => e.address?.toLowerCase()).filter(Boolean) as string[];
 	const bccRecipients = (parsedEmail.bcc || []).map((e) => e.address?.toLowerCase()).filter(Boolean) as string[];
 
@@ -522,13 +743,11 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 	}
 	const mailboxId = mailboxResolution.mailboxId;
 
-	const forwardingSearchText = [
-		parsedEmail.subject || "",
-		parsedEmail.text || "",
-		parsedEmail.html || "",
-	].join("\n");
+	const forwardingSearchText = emailSearchText(parsedEmail);
+	const fromAddress = (parsedEmail.from?.address || "").toLowerCase();
 	ctx.waitUntil(forwardMatchingContentRules(message, env, mailboxId, forwardingSearchText));
-	const labelRule = findContentLabelRule(env, mailboxId, (parsedEmail.from?.address || "").toLowerCase(), forwardingSearchText);
+	const recipientSearchText = [...allRecipients, ...ccRecipients, ...bccRecipients].join("\n");
+	const labelRule = findContentLabelRule(env, mailboxId, fromAddress, recipientSearchText, forwardingSearchText);
 	if (labelRule) console.log(`Labeling ${mailboxId} email by content rule ${labelRule.name} into folder ${labelRule.folderId}`);
 	const destinationFolder = labelRule?.folderId ?? Folders.INBOX;
 
@@ -568,22 +787,60 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 	}
 
 	const originalMessageId = parsedEmail.messageId ? extractMsgId(parsedEmail.messageId) : null;
+	const rawHeaders = JSON.stringify(parsedEmail.headers);
 
 	await stub.createEmail(destinationFolder, {
 		id: messageId, subject: parsedEmail.subject || "",
-		sender: (parsedEmail.from?.address || "").toLowerCase(), recipient: allRecipients.join(", "),
+		sender: fromAddress, recipient: allRecipients.join(", "),
 		cc: ccRecipients.join(", ") || null, bcc: bccRecipients.join(", ") || null,
 		date: new Date().toISOString(), // uses receive time, not the email's Date header
 		body: parsedEmail.html || parsedEmail.text || "",
 		in_reply_to: inReplyTo, email_references: emailReferences.length > 0 ? JSON.stringify(emailReferences) : null,
-		thread_id: threadId, message_id: originalMessageId, raw_headers: JSON.stringify(parsedEmail.headers),
+		thread_id: threadId, message_id: originalMessageId, raw_headers: rawHeaders,
 	}, attachmentData);
+
+	if (allRecipients.includes(AUTOPROCESS_RECIPIENT)) {
+		ctx.waitUntil(postAutoprocessWebhook(env, rawEmail, {
+			messageId,
+			fromAddress,
+			toAddress: AUTOPROCESS_RECIPIENT,
+			mailboxId,
+			subject: parsedEmail.subject || "",
+		}).catch((e) => console.error("Autoprocess webhook failed:", (e as Error).message)));
+	}
+
+	const baseReviewRemovalContext = {
+		messageId,
+		fromAddress,
+		toAddress: AUTOPROCESS_RECIPIENT,
+		mailboxId,
+		subject: parsedEmail.subject || "",
+	};
+	const reviewRemovalCandidates: AirbnbReviewRemovalCandidate[] = [];
+	if (shouldExtractAirbnbReviewRemoval(fromAddress, forwardingSearchText)) {
+		reviewRemovalCandidates.push({
+			emailText: forwardingSearchText,
+			context: baseReviewRemovalContext,
+		});
+	}
+	if (allRecipients.includes(AUTOPROCESS_RECIPIENT)) {
+		reviewRemovalCandidates.push(...await getAutoprocessAttachmentCandidates(parsedEmail, baseReviewRemovalContext));
+	}
+	if (reviewRemovalCandidates.length) {
+		ctx.waitUntil(extractAndStoreAirbnbReviewRemoval(
+			stub,
+			env,
+			messageId,
+			rawHeaders,
+			reviewRemovalCandidates,
+		).catch((e) => console.error("Airbnb review removal extraction failed:", (e as Error).message)));
+	}
 
 	if (isAutoDraftEnabled(env)) {
 		const agentStub = env.EMAIL_AGENT.get(env.EMAIL_AGENT.idFromName(mailboxId));
 		ctx.waitUntil(agentStub.fetch(new Request("https://agents/onNewEmail", {
 			method: "POST", headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ mailboxId, emailId: messageId, sender: (parsedEmail.from?.address || "").toLowerCase(), subject: parsedEmail.subject || "", threadId }),
+			body: JSON.stringify({ mailboxId, emailId: messageId, sender: fromAddress, subject: parsedEmail.subject || "", threadId }),
 		})).catch((e) => console.error("Auto-draft trigger failed:", (e as Error).message)));
 	}
 }

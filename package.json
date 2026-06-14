@@ -5,7 +5,12 @@
 	"type": "module",
 	"cloudflare": {
 		"label": "Agentic Inbox",
-		"products": ["Workers", "Durable Objects", "R2", "Workers AI"],
+		"products": [
+			"Workers",
+			"Durable Objects",
+			"R2",
+			"Workers AI"
+		],
 		"bindings": {
 			"DOMAINS": {
 				"description": "Your domain with [Email Routing](https://developers.cloudflare.com/email-routing/) enabled (e.g. `example.com`). After deploying, create a catch-all Email Routing rule pointing to this Worker."
@@ -13,15 +18,17 @@
 		}
 	},
 	"scripts": {
-		"build": "react-router build",
+		"build": "NODE_OPTIONS='--disable-warning=DEP0205' react-router build",
 		"cf-typegen": "wrangler types",
 		"deploy": "npm run build && wrangler deploy",
-		"dev": "react-router dev",
+		"dev": "NODE_OPTIONS='--disable-warning=DEP0205' react-router dev",
 		"preview": "npm run build && vite preview",
-		"typecheck": "npm run cf-typegen && react-router typegen && tsc -b"
+		"configure-autoprocess-routing": "./scripts/configure-autoprocess-routing.sh",
+		"typecheck": "npm run cf-typegen && NODE_OPTIONS='--disable-warning=DEP0205' react-router typegen && tsc -b"
 	},
 	"dependencies": {
 		"@ai-sdk/openai": "^3.0.41",
+		"@ai-sdk/react": "^3.0.197",
 		"@cloudflare/ai-chat": "^0.1.8",
 		"@cloudflare/kumo": "^1.13.0",
 		"@phosphor-icons/react": "^2.1.10",
@@ -46,7 +53,7 @@
 		"react": "^19.1.0",
 		"react-dom": "^19.1.0",
 		"react-markdown": "^10.1.0",
-		"react-router": "^7.5.3",
+		"react-router": "^7.16.0",
 		"remark-gfm": "^4.0.1",
 		"workers-ai-provider": "^3.1.2",
 		"zod": "^3.25.76",
@@ -82,18 +89,18 @@
 		"@tiptap/extension-text": "3.20.2"
 	},
 	"devDependencies": {
-		"@cloudflare/vite-plugin": "^1.0.12",
-		"@cloudflare/workers-types": "^4.20251128.0",
-		"@react-router/dev": "^7.5.3",
-		"@tailwindcss/vite": "^4.1.4",
+		"@cloudflare/vite-plugin": "^1.39.2",
+		"@cloudflare/workers-types": "^4.20260603.1",
+		"@react-router/dev": "^7.16.0",
+		"@tailwindcss/vite": "^4.3.0",
 		"@types/dompurify": "^3.0.5",
 		"@types/node": "^20.19.37",
 		"@types/react": "^19.1.2",
 		"@types/react-dom": "^19.1.2",
-		"tailwindcss": "^4.1.4",
+		"tailwindcss": "^4.3.0",
 		"typescript": "^5.8.3",
-		"vite": "^6.3.3",
+		"vite": "^7.3.5",
 		"vite-tsconfig-paths": "^5.1.4",
-		"wrangler": "^4.74.0"
+		"wrangler": "^4.97.0"
 	}
 }

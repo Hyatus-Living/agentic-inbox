@@ -16,6 +16,7 @@ export type ContentLabelRule = {
 	name: string;
 	mailboxId: string;
 	fromPattern?: string;
+	recipientPattern?: string;
 	pattern: string;
 	flags?: string;
 	folderId: string;

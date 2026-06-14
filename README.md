@@ -68,14 +68,59 @@ npm run dev
 `EMAIL_ADDRESSES` is the list of accepted inbound recipients. `EMAIL_ADDRESS_ALIASES` maps accepted alias addresses into the canonical mailbox where mail is stored:
 
 ```jsonc
-"EMAIL_ADDRESSES": ["ai@hyatusliving.com", "codex@hyatusliving.com", "claude@hyatusliving.com"],
+"EMAIL_ADDRESSES": ["ai@hyatusliving.com", "codex@hyatusliving.com", "claude@hyatusliving.com", "autoprocess@hyatusliving.com"],
 "EMAIL_ADDRESS_ALIASES": {
   "codex@hyatusliving.com": "ai@hyatusliving.com",
-  "claude@hyatusliving.com": "ai@hyatusliving.com"
+  "claude@hyatusliving.com": "ai@hyatusliving.com",
+  "autoprocess@hyatusliving.com": "ai@hyatusliving.com"
 }
 ```
 
-With this config, mail sent to `codex@hyatusliving.com` or `claude@hyatusliving.com` is stored in the `ai@hyatusliving.com` mailbox while the original `To` recipient remains visible on the email record.
+With this config, mail sent to `codex@hyatusliving.com`, `claude@hyatusliving.com`, or `autoprocess@hyatusliving.com` is stored in the `ai@hyatusliving.com` mailbox while the original `To` recipient remains visible on the email record.
+
+### Autoprocess inbound webhook
+
+Mail sent to `autoprocess@hyatusliving.com` is stored in the `ai@hyatusliving.com` mailbox, placed in the `Auto Process` folder, and posted to the configured webhook as raw `message/rfc822`.
+
+Set the webhook URL as a Worker secret:
+
+```bash
+printf '%s' 'https://example.com/webhook' | wrangler secret put AUTOPROCESS_WEBHOOK_URL
+```
+
+Then deploy and create the exact Email Routing rule:
+
+```bash
+npm run deploy
+npm run configure-autoprocess-routing
+```
+
+The routing script creates or updates `autoprocess@hyatusliving.com` so Cloudflare sends it to the `hyatusliving-agentic-inbox` Worker.
+
+### Airbnb review removal extraction
+
+Inbound messages whose sender email contains `airbnb.com` and whose subject/body contains either `has been removed at their request` or `We've removed reviews from your account` are sent to the FastAPI Bedrock Simple AI structured endpoint.
+
+The extraction writes a synthetic `X-Hyatus-Structured-Extraction` entry into the stored email source headers with:
+
+- `airbnb_channel_reservation_id`
+- `extraction_purpose`
+- `review_has_been_removed`
+
+Set the Simple AI key as a Worker secret:
+
+```bash
+wrangler secret put SIMPLE_AI_API_KEY
+```
+
+`SIMPLE_AI_STRUCTURED_URL` is configured in `wrangler.jsonc` and defaults to `https://fast.gptpricing.com/simple-ai/structured`.
+
+### Review removal forwarding
+
+`CONTENT_FORWARD_RULES` forwards known channel review-removal notices to `autoprocess@hyatusliving.com` for downstream processing:
+
+- Airbnb notices that say the review was removed at/upon guest request, or `We've removed reviews from your account`.
+- Expedia / Partner Central notices whose subject/body contains `Guest review removed` or `Customer Review Removal`.
 
 ### Content forwarding rules
 
@@ -97,7 +142,7 @@ Each rule applies only to its `mailboxId`. `forwardTo` must be a verified Cloudf
 
 ### Content label rules
 
-Agentic Inbox stores mail in folders rather than separate Gmail-style labels. Inbound messages can be placed into a folder when their subject, text body, or HTML body matches a JavaScript regular expression. Configure rules in `wrangler.jsonc` under `CONTENT_LABEL_RULES`:
+Agentic Inbox stores mail in folders rather than separate Gmail-style labels. Inbound messages can be placed into a folder when their recipient, subject, text body, or HTML body matches a JavaScript regular expression. Configure rules in `wrangler.jsonc` under `CONTENT_LABEL_RULES`:
 
 ```jsonc
 "CONTENT_LABEL_RULES": [
@@ -105,6 +150,7 @@ Agentic Inbox stores mail in folders rather than separate Gmail-style labels. In
     "name": "booking-folder",
     "mailboxId": "ai@hyatusliving.com",
     "fromPattern": "^noreply@example\\.com$",
+    "recipientPattern": "^ai@hyatusliving\\.com$",
     "pattern": "\\b(reservation|booking)\\b",
     "flags": "i",
     "folderId": "booking",
@@ -113,7 +159,7 @@ Agentic Inbox stores mail in folders rather than separate Gmail-style labels. In
 ]
 ```
 
-Each rule applies only to its `mailboxId`. `fromPattern` is optional and matches the parsed sender email address. The first matching rule wins. `folderId` can be a system folder ID such as `inbox`, `archive`, `trash`, or a custom folder ID. Custom folders declared by label rules are created automatically with `folderName` when folders are listed or matching inbound mail arrives.
+Each rule applies only to its `mailboxId`. `fromPattern` is optional and matches the parsed sender email address. `recipientPattern` is optional and matches the parsed `To`, `Cc`, or `Bcc` recipients. The first matching rule wins. `folderId` can be a system folder ID such as `inbox`, `archive`, `trash`, or a custom folder ID. Custom folders declared by label rules are created automatically with `folderName` when folders are listed or matching inbound mail arrives.
 
 To apply the configured label rules to existing mail, call:
 
