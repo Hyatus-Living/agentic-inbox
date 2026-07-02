@@ -127,6 +127,16 @@
 				"flags": "i",
 				"folderId": "two-fa-dynamo",
 				"folderName": "Two FA Dynamo"
+			},
+			{
+				"name": "mmt-one-time-passcode-two-fa",
+				"mailboxId": "ai@hyatusliving.com",
+				"fromPattern": "^noreply@go-mmt\\.com$",
+				"recipientPattern": "\\bai@hyatusliving\\.com\\b",
+				"pattern": "(?=[\\s\\S]*\\bOTP\\b)(?=[\\s\\S]*\\b(?:one-time passcode|use the below one-time passcode)\\b)(?=[\\s\\S]*\\b\\d{4,8}\\b)",
+				"flags": "i",
+				"folderId": "two-fa-dynamo",
+				"folderName": "Two FA Dynamo"
 			}
 		],
 		"INBOUND_ONLY": "true",
