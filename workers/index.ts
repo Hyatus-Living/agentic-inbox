@@ -33,6 +33,12 @@ import {
 	resolveMailboxForRecipients,
 	type ContentLabelRule,
 } from "./lib/config";
+import {
+	hasAttachedEmailMessages,
+	shouldExtractReviewRemoval,
+	shouldUseOuterReviewRemovalCandidate,
+} from "./review-removal-routing";
+import { getTwofaEmailMatch } from "./twofa-routing";
 
 type AppContext = Context<MailboxContext>;
 
@@ -454,22 +460,6 @@ app.get("/api/v1/mailboxes/:mailboxId/emails/:emailId/attachments/:attachmentId"
 const MAX_EMAIL_SIZE = 25 * 1024 * 1024;
 const AUTOPROCESS_RECIPIENT = "autoprocess@hyatusliving.com";
 const SIMPLE_AI_STRUCTURED_URL = "https://fast.gptpricing.com/simple-ai/structured";
-const REVIEW_REMOVAL_TEXT_PATTERNS = [
-	"has been removed at their request",
-	"been removed at their request",
-	"has been removed upon their request",
-	"been removed upon their request",
-	"we've removed reviews from your account",
-	"we’ve removed reviews from your account",
-	"guest review removed",
-	"customer review removal",
-	"review was taken down",
-	"review removed",
-	"removed review",
-	"review has been removed",
-	"review was removed",
-	"taken down from vrbo",
-];
 
 interface ReviewRemovalExtraction {
 	channel: string;
@@ -491,6 +481,22 @@ interface ReviewRemovalContext {
 interface ReviewRemovalCandidate {
 	emailText: string;
 	context: ReviewRemovalContext;
+}
+
+interface KeycafeStatusExtraction {
+	building_name: string;
+	keycafe_status: "online" | "offline" | "unknown";
+	issue_type: string;
+	status_text: string;
+	extraction_purpose: string;
+}
+
+interface KeycafeStatusContext {
+	messageId: string;
+	fromAddress: string;
+	toAddress: string;
+	mailboxId: string;
+	subject: string;
 }
 
 type ParsedEmailAttachment = {
@@ -585,31 +591,9 @@ async function postAutoprocessWebhook(env: Env, rawEmail: Uint8Array, context: {
 	if (!response.ok) throw new Error(`Autoprocess webhook failed with status ${response.status}`);
 }
 
-function shouldExtractReviewRemoval(fromAddress: string, searchText: string, allowAutoprocessForward = false) {
-	const normalizedText = searchText.toLowerCase();
-	const normalizedFrom = fromAddress.toLowerCase();
-	const matchesRemovalText = REVIEW_REMOVAL_TEXT_PATTERNS.some((pattern) => normalizedText.includes(pattern));
-	if (!matchesRemovalText) return false;
-	if (allowAutoprocessForward) return true;
-	return [
-		"airbnb.com",
-		"booking.com",
-		"partners.booking.com",
-		"mchat.booking.com",
-		"expedia.com",
-		"expediapartnercentral.com",
-		"partnercentral",
-		"homeaway.com",
-		"rentalsunited.com",
-		"vrbo",
-	].some((sender) => normalizedFrom.includes(sender));
-}
-
-function appendStructuredExtractionHeader(rawHeaders: string, extraction: ReviewRemovalExtraction | ReviewRemovalExtraction[]) {
+function appendStructuredExtractionHeader(rawHeaders: string, name: string, extraction: unknown) {
 	const headerName = "X-Hyatus-Structured-Extraction";
-	const headerValue = JSON.stringify(Array.isArray(extraction)
-		? { name: "review-removal", extractions: extraction }
-		: { name: "review-removal", ...extraction });
+	const headerValue = JSON.stringify(Array.isArray(extraction) ? { name, extractions: extraction } : { name, ...(extraction as Record<string, unknown>) });
 	const parsed = JSON.parse(rawHeaders);
 	if (Array.isArray(parsed)) return JSON.stringify([...parsed, { key: headerName, value: headerValue }]);
 	return JSON.stringify({ ...parsed, [headerName]: headerValue });
@@ -726,8 +710,157 @@ async function extractAndStoreReviewRemoval(
 		extractions.push(extraction);
 	}
 	if (!extractions.length) return;
-	await stub.setEmailRawHeaders(emailId, appendStructuredExtractionHeader(rawHeaders, extractions.length === 1 ? extractions[0] : extractions));
+	await stub.setEmailRawHeaders(emailId, appendStructuredExtractionHeader(rawHeaders, "review-removal", extractions.length === 1 ? extractions[0] : extractions));
 	console.log(`Stored ${extractions.length} review removal extraction(s) for email ${emailId}`);
+}
+
+function shouldExtractKeycafeStatus(fromAddress: string, searchText: string) {
+	const normalizedText = searchText.toLowerCase();
+	const fromKeycafe = fromAddress.toLowerCase().includes("keycafe.com")
+		|| normalizedText.includes("noreply@keycafe.com")
+		|| normalizedText.includes("from: keycafe");
+	if (!fromKeycafe) return false;
+	return [
+		"is currently experiencing the following issue",
+		"active issue status",
+		"cabinet offline",
+		"has been resolved",
+		"no longer experiencing any issues",
+		"back to active status",
+		"is experiencing an issue",
+	].some((pattern) => normalizedText.includes(pattern));
+}
+
+async function extractKeycafeStatus(env: Env, emailText: string) {
+	if (!env.SIMPLE_AI_API_KEY) throw new Error("SIMPLE_AI_API_KEY is required for Keycafe status extraction");
+	const response = await fetch(env.SIMPLE_AI_STRUCTURED_URL || SIMPLE_AI_STRUCTURED_URL, {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+			"x-api-key": env.SIMPLE_AI_API_KEY,
+		},
+		body: JSON.stringify({
+			provider: "openai",
+			model: "gpt-5-nano",
+			system_prompt: [
+				"You extract structured data from Keycafe SmartBox status notification emails.",
+				"Return only data supported by the email text.",
+				"Extract the building or location name from the notification subject or body.",
+				"Use keycafe_status offline when the email says the location is experiencing an issue, has Cabinet Offline, or is in Active Issue status.",
+				"Use keycafe_status online when the email says the issue has been resolved, is no longer experiencing issues, or is back to Active status.",
+				"The extraction purpose must be keycafe_status.",
+			].join(" "),
+			user_prompt: emailText,
+			output_schema_json: {
+				type: "object",
+				properties: {
+					building_name: {
+						type: "string",
+						description: "The building or Keycafe location name from the notification.",
+					},
+					keycafe_status: {
+						type: "string",
+						enum: ["online", "offline", "unknown"],
+						description: "online for resolved/back to Active; offline for active issue/cabinet offline.",
+					},
+					issue_type: {
+						type: "string",
+						description: "The specific issue type, such as Cabinet Offline, or an empty string when resolved/online.",
+					},
+					status_text: {
+						type: "string",
+						description: "Short human-readable status phrase supported by the email.",
+					},
+					extraction_purpose: {
+						type: "string",
+						description: "Always keycafe_status for this extraction.",
+					},
+				},
+				required: ["building_name", "keycafe_status", "issue_type", "status_text", "extraction_purpose"],
+				additionalProperties: false,
+			},
+		}),
+	});
+	if (!response.ok) throw new Error(`Simple AI Keycafe status extraction failed with status ${response.status}`);
+	const body = await response.json() as { structured_data: KeycafeStatusExtraction };
+	return body.structured_data;
+}
+
+async function postKeycafeStatusUpdate(env: Env, extraction: KeycafeStatusExtraction, context: KeycafeStatusContext) {
+	if (!env.KEYCAFE_STATUS_UPDATE_URL) return { posted: false, reason: "KEYCAFE_STATUS_UPDATE_URL not configured" };
+	const headers: Record<string, string> = { "Content-Type": "application/json" };
+	if (env.KEYCAFE_STATUS_UPDATE_API_KEY) headers["x-api-key"] = env.KEYCAFE_STATUS_UPDATE_API_KEY;
+	const response = await fetch(env.KEYCAFE_STATUS_UPDATE_URL, {
+		method: "POST",
+		headers,
+		body: JSON.stringify({
+			building_name: extraction.building_name,
+			keycafe_status: extraction.keycafe_status,
+			issue_type: extraction.issue_type,
+			status_text: extraction.status_text,
+			extraction_purpose: extraction.extraction_purpose,
+			source_email_id: context.messageId,
+			source_mailbox: context.mailboxId,
+			source_recipient: context.toAddress,
+			source_from: context.fromAddress,
+			source_subject: context.subject,
+		}),
+	});
+	if (!response.ok) throw new Error(`Keycafe status update failed with status ${response.status}`);
+	return { posted: true };
+}
+
+async function extractAndStoreKeycafeStatus(
+	stub: { setEmailRawHeaders: (id: string, rawHeaders: string) => Promise<unknown> },
+	env: Env,
+	emailId: string,
+	rawHeaders: string,
+	emailText: string,
+	context: KeycafeStatusContext,
+) {
+	const extraction = await extractKeycafeStatus(env, emailText);
+	if (!extraction.building_name || extraction.keycafe_status === "unknown") {
+		console.warn(`Skipping Keycafe status update without building/status for email ${emailId}`);
+		return;
+	}
+	const postResult = await postKeycafeStatusUpdate(env, extraction, context);
+	await stub.setEmailRawHeaders(emailId, appendStructuredExtractionHeader(rawHeaders, "keycafe-status", { ...extraction, post_result: postResult }));
+	console.log(`Stored Keycafe status extraction for email ${emailId}: ${extraction.building_name} ${extraction.keycafe_status}`);
+}
+
+async function postTwofaEmail(env: Env, emailText: string, context: {
+	messageId: string;
+	fromAddress: string;
+	toAddress: string;
+	mailboxId: string;
+	subject: string;
+	source: string;
+	channel: string;
+}) {
+	if (!env.TWOFA_POST_URL) throw new Error("TWOFA_POST_URL is required for 2FA email processing");
+	if (!env.TWOFA_API_KEY) throw new Error("TWOFA_API_KEY is required for 2FA email processing");
+	const response = await fetch(env.TWOFA_POST_URL, {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+			"x-api-key": env.TWOFA_API_KEY,
+		},
+		body: JSON.stringify({
+			email_body: emailText,
+			email_received_at_epoch: Math.floor(Date.now() / 1000),
+			source: context.source,
+			channel: context.channel,
+			subject: context.subject,
+			context: `Forwarded from ${context.mailboxId} 2FA email ${context.messageId}`,
+			requester_email: context.toAddress,
+			source_email_id: context.messageId,
+			source_mailbox: context.mailboxId,
+			source_recipient: context.toAddress,
+			source_from: context.fromAddress,
+			source_subject: context.subject,
+		}),
+	});
+	if (!response.ok) throw new Error(`2FA post failed with status ${response.status}`);
 }
 
 function emailSearchText(email: { subject?: string; text?: string; html?: string }) {
@@ -864,14 +997,15 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 		mailboxId,
 		subject: parsedEmail.subject || "",
 	};
+	const isAutoprocessRecipient = allRecipients.includes(AUTOPROCESS_RECIPIENT);
 	const reviewRemovalCandidates: ReviewRemovalCandidate[] = [];
-	if (shouldExtractReviewRemoval(fromAddress, forwardingSearchText, allRecipients.includes(AUTOPROCESS_RECIPIENT))) {
+	if (shouldUseOuterReviewRemovalCandidate(parsedEmail, fromAddress, forwardingSearchText, isAutoprocessRecipient)) {
 		reviewRemovalCandidates.push({
 			emailText: forwardingSearchText,
 			context: baseReviewRemovalContext,
 		});
 	}
-	if (allRecipients.includes(AUTOPROCESS_RECIPIENT)) {
+	if (isAutoprocessRecipient && hasAttachedEmailMessages(parsedEmail)) {
 		reviewRemovalCandidates.push(...await getAutoprocessAttachmentCandidates(parsedEmail, baseReviewRemovalContext));
 	}
 	if (reviewRemovalCandidates.length) {
@@ -882,6 +1016,36 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 			rawHeaders,
 			reviewRemovalCandidates,
 		).catch((e) => console.error("Review removal extraction failed:", (e as Error).message)));
+	}
+
+	if (shouldExtractKeycafeStatus(fromAddress, forwardingSearchText)) {
+		ctx.waitUntil(extractAndStoreKeycafeStatus(
+			stub,
+			env,
+			messageId,
+			rawHeaders,
+			forwardingSearchText,
+			{
+				messageId,
+				fromAddress,
+				toAddress: allRecipients.join(", "),
+				mailboxId,
+				subject: parsedEmail.subject || "",
+			},
+		).catch((e) => console.error("Keycafe status extraction failed:", (e as Error).message)));
+	}
+
+	const twofaEmailMatch = getTwofaEmailMatch(fromAddress, forwardingSearchText);
+	if (twofaEmailMatch) {
+		ctx.waitUntil(postTwofaEmail(env, parsedEmail.html || parsedEmail.text || forwardingSearchText, {
+			messageId,
+			fromAddress,
+			toAddress: allRecipients.join(", "),
+			mailboxId,
+			subject: parsedEmail.subject || "",
+			source: twofaEmailMatch.source,
+			channel: twofaEmailMatch.channel,
+		}).catch((e) => console.error("2FA post failed:", (e as Error).message)));
 	}
 
 	if (isAutoDraftEnabled(env)) {

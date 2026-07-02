@@ -10,4 +10,7 @@ export interface Env extends Cloudflare.Env {
 	SIMPLE_AI_API_KEY?: string;
 	REVIEW_REMOVAL_API_KEY?: string;
 	AIRBNB_REVIEW_REMOVAL_API_KEY?: string;
+	KEYCAFE_STATUS_UPDATE_URL?: string;
+	KEYCAFE_STATUS_UPDATE_API_KEY?: string;
+	TWOFA_API_KEY?: string;
 }

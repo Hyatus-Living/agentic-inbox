@@ -665,24 +665,35 @@ export class MailboxDO extends DurableObject<Env> {
 			matched: 0,
 			moved: 0,
 			alreadyInFolder: 0,
+			unmatchedMovedToInbox: 0,
 		}));
+		const managedFolderIds = new Set(rules.map((rule) => rule.folderId));
 
 		for (const rule of rules) {
 			await this.createFolder(rule.folderId, rule.folderName ?? rule.folderId);
 		}
 
 		const rows = [...this.ctx.storage.sql.exec(
-			`SELECT id, subject, sender, body, folder_id FROM emails ORDER BY date DESC`,
-		)] as Array<{ id: string; subject: string; sender: string; body: string; folder_id: string }>;
+			`SELECT id, subject, sender, recipient, cc, bcc, body, folder_id FROM emails ORDER BY date DESC`,
+		)] as Array<{ id: string; subject: string; sender: string; recipient: string; cc: string | null; bcc: string | null; body: string; folder_id: string }>;
 
 		for (const row of rows) {
 			const searchText = `${row.subject || ""}\n${row.body || ""}`;
+			const recipientText = [row.recipient, row.cc, row.bcc].filter(Boolean).join("\n").toLowerCase();
 			const ruleIndex = rules.findIndex((rule) => {
 				const flags = rule.flags ?? "i";
 				if (rule.fromPattern && !new RegExp(rule.fromPattern, flags).test((row.sender || "").toLowerCase())) return false;
+				if (rule.recipientPattern && !new RegExp(rule.recipientPattern, flags).test(recipientText)) return false;
 				return new RegExp(rule.pattern, flags).test(searchText);
 			});
-			if (ruleIndex < 0) continue;
+			if (ruleIndex < 0) {
+				if (managedFolderIds.has(row.folder_id) && row.folder_id !== Folders.INBOX) {
+					await this.moveEmail(row.id, Folders.INBOX);
+					const priorRuleIndex = rules.findIndex((rule) => rule.folderId === row.folder_id);
+					if (priorRuleIndex >= 0) results[priorRuleIndex].unmatchedMovedToInbox++;
+				}
+				continue;
+			}
 
 			const rule = rules[ruleIndex];
 			const result = results[ruleIndex];
