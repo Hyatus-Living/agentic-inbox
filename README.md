@@ -68,15 +68,42 @@ npm run dev
 `EMAIL_ADDRESSES` is the list of accepted inbound recipients. `EMAIL_ADDRESS_ALIASES` maps accepted alias addresses into the canonical mailbox where mail is stored:
 
 ```jsonc
-"EMAIL_ADDRESSES": ["ai@hyatusliving.com", "codex@hyatusliving.com", "claude@hyatusliving.com", "autoprocess@hyatusliving.com"],
+"EMAIL_ADDRESSES": [
+  "ai@hyatusliving.com",
+  "codex@hyatusliving.com",
+  "codex1@hyatusliving.com",
+  "codex2@hyatusliving.com",
+  "codex3@hyatusliving.com",
+  "codex4@hyatusliving.com",
+  "codex5@hyatusliving.com",
+  "codex6@hyatusliving.com",
+  "codex7@hyatusliving.com",
+  "codex8@hyatusliving.com",
+  "codex9@hyatusliving.com",
+  "codex10@hyatusliving.com",
+  "claude@hyatusliving.com",
+  "autoprocess@hyatusliving.com",
+  "accounts@hyatusliving.com"
+],
 "EMAIL_ADDRESS_ALIASES": {
   "codex@hyatusliving.com": "ai@hyatusliving.com",
+  "codex1@hyatusliving.com": "ai@hyatusliving.com",
+  "codex2@hyatusliving.com": "ai@hyatusliving.com",
+  "codex3@hyatusliving.com": "ai@hyatusliving.com",
+  "codex4@hyatusliving.com": "ai@hyatusliving.com",
+  "codex5@hyatusliving.com": "ai@hyatusliving.com",
+  "codex6@hyatusliving.com": "ai@hyatusliving.com",
+  "codex7@hyatusliving.com": "ai@hyatusliving.com",
+  "codex8@hyatusliving.com": "ai@hyatusliving.com",
+  "codex9@hyatusliving.com": "ai@hyatusliving.com",
+  "codex10@hyatusliving.com": "ai@hyatusliving.com",
   "claude@hyatusliving.com": "ai@hyatusliving.com",
-  "autoprocess@hyatusliving.com": "ai@hyatusliving.com"
+  "autoprocess@hyatusliving.com": "ai@hyatusliving.com",
+  "accounts@hyatusliving.com": "ai@hyatusliving.com"
 }
 ```
 
-With this config, mail sent to `codex@hyatusliving.com`, `claude@hyatusliving.com`, or `autoprocess@hyatusliving.com` is stored in the `ai@hyatusliving.com` mailbox while the original `To` recipient remains visible on the email record.
+With this config, mail sent to `codex@hyatusliving.com`, `codex1@hyatusliving.com` through `codex10@hyatusliving.com`, `claude@hyatusliving.com`, `autoprocess@hyatusliving.com`, or `accounts@hyatusliving.com` is stored in the `ai@hyatusliving.com` mailbox while the original `To` recipient remains visible on the email record.
 
 ### Autoprocess inbound webhook
 
@@ -88,14 +115,14 @@ Set the webhook URL as a Worker secret:
 printf '%s' 'https://example.com/webhook' | wrangler secret put AUTOPROCESS_WEBHOOK_URL
 ```
 
-Then deploy and create the exact Email Routing rule:
+Then deploy and create the exact Email Routing rules:
 
 ```bash
 npm run deploy
 npm run configure-autoprocess-routing
 ```
 
-The routing script creates or updates `autoprocess@hyatusliving.com` so Cloudflare sends it to the `hyatusliving-agentic-inbox` Worker.
+The routing script creates or updates `autoprocess@hyatusliving.com` and `accounts@hyatusliving.com` so Cloudflare sends both to the `hyatusliving-agentic-inbox` Worker.
 
 ### Airbnb review removal extraction
 
@@ -114,6 +141,15 @@ wrangler secret put SIMPLE_AI_API_KEY
 ```
 
 `SIMPLE_AI_STRUCTURED_URL` is configured in `wrangler.jsonc` and defaults to `https://fast.gptpricing.com/simple-ai/structured`.
+
+### 2FA posting
+
+Inbound login-code emails from configured senders are posted to the 2FA endpoint and labeled into `two-fa-dynamo`. The Worker currently matches:
+
+- ChatGPT codes from OpenAI senders matching `openai.com` or `tm*.openai.com`, with body text containing `Your temporary ChatGPT login code` and `Enter this temporary verification code to continue`
+- Autohost login codes from `no-reply@notice.autohost.ai`, with body text containing `Your Autohost login verification code`, `Please verify your login attempt`, and a verification code after `verification code below`
+
+`TWOFA_POST_URL` is configured in `wrangler.jsonc`; set `TWOFA_API_KEY` as a Worker secret.
 
 ### Review removal forwarding
 

@@ -21,11 +21,38 @@
 		// TEAM_DOMAIN may be the base Access URL or the full /cdn-cgi/access/certs URL.
 		// The worker now fails closed outside local development if Access is not configured.
 		"DOMAINS": "hyatusliving.com",
-		"EMAIL_ADDRESSES": ["ai@hyatusliving.com", "codex@hyatusliving.com", "claude@hyatusliving.com", "autoprocess@hyatusliving.com"],
+		"EMAIL_ADDRESSES": [
+			"ai@hyatusliving.com",
+			"codex@hyatusliving.com",
+			"codex1@hyatusliving.com",
+			"codex2@hyatusliving.com",
+			"codex3@hyatusliving.com",
+			"codex4@hyatusliving.com",
+			"codex5@hyatusliving.com",
+			"codex6@hyatusliving.com",
+			"codex7@hyatusliving.com",
+			"codex8@hyatusliving.com",
+			"codex9@hyatusliving.com",
+			"codex10@hyatusliving.com",
+			"claude@hyatusliving.com",
+			"autoprocess@hyatusliving.com",
+			"accounts@hyatusliving.com"
+		],
 		"EMAIL_ADDRESS_ALIASES": {
 			"codex@hyatusliving.com": "ai@hyatusliving.com",
+			"codex1@hyatusliving.com": "ai@hyatusliving.com",
+			"codex2@hyatusliving.com": "ai@hyatusliving.com",
+			"codex3@hyatusliving.com": "ai@hyatusliving.com",
+			"codex4@hyatusliving.com": "ai@hyatusliving.com",
+			"codex5@hyatusliving.com": "ai@hyatusliving.com",
+			"codex6@hyatusliving.com": "ai@hyatusliving.com",
+			"codex7@hyatusliving.com": "ai@hyatusliving.com",
+			"codex8@hyatusliving.com": "ai@hyatusliving.com",
+			"codex9@hyatusliving.com": "ai@hyatusliving.com",
+			"codex10@hyatusliving.com": "ai@hyatusliving.com",
 			"claude@hyatusliving.com": "ai@hyatusliving.com",
-			"autoprocess@hyatusliving.com": "ai@hyatusliving.com"
+			"autoprocess@hyatusliving.com": "ai@hyatusliving.com",
+			"accounts@hyatusliving.com": "ai@hyatusliving.com"
 		},
 		"CONTENT_FORWARD_RULES": [
 			{
@@ -61,6 +88,7 @@
 		"SIMPLE_AI_STRUCTURED_URL": "https://fast.gptpricing.com/simple-ai/structured",
 		"REVIEW_REMOVAL_URL": "https://gn6slmok95.execute-api.us-east-1.amazonaws.com/dev/admin-api/review-removal",
 		"AIRBNB_REVIEW_REMOVAL_URL": "https://gn6slmok95.execute-api.us-east-1.amazonaws.com/dev/admin-api/airbnb-review-removal",
+		"TWOFA_POST_URL": "https://kjc0ypdntl.execute-api.us-east-1.amazonaws.com/dev/api/twofa",
 		"CONTENT_LABEL_RULES": [
 			{
 				"name": "autoprocess-inbound",
@@ -72,10 +100,30 @@
 				"folderName": "Auto Process"
 			},
 			{
+				"name": "keycafe",
+				"mailboxId": "ai@hyatusliving.com",
+				"recipientPattern": "^ai@hyatusliving\\.com$",
+				"pattern": "\\bKeycafe\\b|noreply@keycafe\\.com|Important Notice:.*(?:Issue At|Is Experiencing An Issue|Has Been Resolved)",
+				"flags": "i",
+				"folderId": "keycafe",
+				"folderName": "Keycafe"
+			},
+			{
 				"name": "openai-chatgpt-two-fa",
 				"mailboxId": "ai@hyatusliving.com",
-				"fromPattern": "^noreply@tm\\d*\\.openai\\.com$",
-				"pattern": "(?=[\\s\\S]*\\bYour temporary ChatGPT login code\\b)(?=[\\s\\S]*\\bEnter this temporary verification code to continue\\b)",
+				"fromPattern": "^(?:[^@\\s]+@(?:tm\\d*\\.)?openai\\.com|tm@openai\\.com)$",
+				"recipientPattern": "\\b(?:ai|codex(?:10|[1-9])?)@hyatusliving\\.com\\b",
+				"pattern": "(?=[\\s\\S]*\\bYour temporary ChatGPT (?:login|verification) code\\b)(?=[\\s\\S]*\\bEnter this temporary verification code to continue\\b)",
+				"flags": "i",
+				"folderId": "two-fa-dynamo",
+				"folderName": "Two FA Dynamo"
+			},
+			{
+				"name": "autohost-login-two-fa",
+				"mailboxId": "ai@hyatusliving.com",
+				"fromPattern": "^no-reply@notice\\.autohost\\.ai$",
+				"recipientPattern": "\\bai@hyatusliving\\.com\\b",
+				"pattern": "(?=[\\s\\S]*\\bYour Autohost login verification code\\b)(?=[\\s\\S]*\\bPlease verify your login attempt\\b)(?=[\\s\\S]*\\bverification code below\\b[\\s\\S]{0,1200}\\b\\d{6}\\b)",
 				"flags": "i",
 				"folderId": "two-fa-dynamo",
 				"folderName": "Two FA Dynamo"
