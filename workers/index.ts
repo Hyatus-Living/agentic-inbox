@@ -38,7 +38,8 @@ import {
 	shouldExtractReviewRemoval,
 	shouldUseOuterReviewRemovalCandidate,
 } from "./review-removal-routing";
-import { getTwofaEmailMatch } from "./twofa-routing";
+import { getClaudeLoginSmsMatch, getTwofaEmailMatch } from "./twofa-routing";
+import { ADMIN_FORWARD_TO, getAdminForwardRecipient } from "./admin-routing";
 
 type AppContext = Context<MailboxContext>;
 
@@ -863,6 +864,32 @@ async function postTwofaEmail(env: Env, emailText: string, context: {
 	if (!response.ok) throw new Error(`2FA post failed with status ${response.status}`);
 }
 
+async function postTwofaSms(env: Env, payload: {
+	service: string;
+	recipient: string;
+	link: string;
+	messageId: string;
+	receivedAt: string;
+}) {
+	if (!env.TWOFA_SMS_WEBHOOK_URL) throw new Error("TWOFA_SMS_WEBHOOK_URL is required for 2FA SMS processing");
+	if (!env.TWOFA_SMS_WEBHOOK_KEY) throw new Error("TWOFA_SMS_WEBHOOK_KEY is required for 2FA SMS processing");
+	const response = await fetch(env.TWOFA_SMS_WEBHOOK_URL, {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+			"x-api-key": env.TWOFA_SMS_WEBHOOK_KEY,
+		},
+		body: JSON.stringify({
+			service: payload.service,
+			recipient: payload.recipient,
+			link: payload.link,
+			receivedAt: payload.receivedAt,
+			sourceEmailId: payload.messageId,
+		}),
+	});
+	if (!response.ok) throw new Error(`2FA SMS webhook failed with status ${response.status}`);
+}
+
 function emailSearchText(email: { subject?: string; text?: string; html?: string }) {
 	return [
 		email.subject || "",
@@ -914,6 +941,15 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 	if (!allRecipients.length) throw new Error("received email with empty to");
 	const ccRecipients = (parsedEmail.cc || []).map((e) => e.address?.toLowerCase()).filter(Boolean) as string[];
 	const bccRecipients = (parsedEmail.bcc || []).map((e) => e.address?.toLowerCase()).filter(Boolean) as string[];
+	const adminForwardRecipient = getAdminForwardRecipient([...allRecipients, ...ccRecipients, ...bccRecipients]);
+	if (adminForwardRecipient) {
+		const headers = new Headers();
+		headers.set("X-Hyatus-Forward-Rule", "admin-prefix");
+		headers.set("X-Hyatus-Forward-Source-Recipient", adminForwardRecipient);
+		await message.forward(ADMIN_FORWARD_TO, headers);
+		console.log(`Forwarded ${adminForwardRecipient} email to ${ADMIN_FORWARD_TO} by admin-prefix rule`);
+		return;
+	}
 
 	const mailboxResolution = allowedAddresses.length > 0
 		? resolveMailboxForRecipients(env, allRecipients)
@@ -1035,7 +1071,7 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 		).catch((e) => console.error("Keycafe status extraction failed:", (e as Error).message)));
 	}
 
-	const twofaEmailMatch = getTwofaEmailMatch(fromAddress, forwardingSearchText);
+	const twofaEmailMatch = getTwofaEmailMatch(fromAddress, forwardingSearchText, allRecipients);
 	if (twofaEmailMatch) {
 		ctx.waitUntil(postTwofaEmail(env, parsedEmail.html || parsedEmail.text || forwardingSearchText, {
 			messageId,
@@ -1046,6 +1082,15 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 			source: twofaEmailMatch.source,
 			channel: twofaEmailMatch.channel,
 		}).catch((e) => console.error("2FA post failed:", (e as Error).message)));
+	}
+
+	const claudeLoginSmsMatch = getClaudeLoginSmsMatch(fromAddress, allRecipients, forwardingSearchText);
+	if (claudeLoginSmsMatch) {
+		ctx.waitUntil(postTwofaSms(env, {
+			...claudeLoginSmsMatch,
+			messageId,
+			receivedAt: new Date().toISOString(),
+		}).catch((e) => console.error("2FA SMS webhook failed:", (e as Error).message)));
 	}
 
 	if (isAutoDraftEnabled(env)) {

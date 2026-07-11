@@ -89,6 +89,7 @@
 		"REVIEW_REMOVAL_URL": "https://gn6slmok95.execute-api.us-east-1.amazonaws.com/dev/admin-api/review-removal",
 		"AIRBNB_REVIEW_REMOVAL_URL": "https://gn6slmok95.execute-api.us-east-1.amazonaws.com/dev/admin-api/airbnb-review-removal",
 		"TWOFA_POST_URL": "https://kjc0ypdntl.execute-api.us-east-1.amazonaws.com/dev/api/twofa",
+		"TWOFA_SMS_WEBHOOK_URL": "https://twilio-theta-liart.vercel.app/api/twofa/claude-link-sms",
 		"CONTENT_LABEL_RULES": [
 			{
 				"name": "autoprocess-inbound",
@@ -109,11 +110,71 @@
 				"folderName": "Keycafe"
 			},
 			{
+				"name": "claude-login-link-two-fa",
+				"mailboxId": "ai@hyatusliving.com",
+				"fromPattern": "^no-reply(?:-[a-z0-9-]+)?@(?:[a-z0-9-]+\\.)*anthropic\\.com$",
+				"recipientPattern": "\\bclaude@hyatusliving\\.com\\b",
+				"pattern": "(?=[\\s\\S]*\\bSecure link to log in to Claude\\.ai\\b)(?=[\\s\\S]*\\bSign in to Claude\\.ai\\b)(?=[\\s\\S]*\\bclaude\\.ai/magic-link\\b)",
+				"flags": "i",
+				"folderId": "two-fa-dynamo",
+				"folderName": "Two FA Dynamo"
+			},
+			{
+				"name": "roku-activate-device-two-fa",
+				"mailboxId": "ai@hyatusliving.com",
+				"fromPattern": "^accounts@hyatus\\.com$",
+				"recipientPattern": "\\b(?:ai@hyatusliving\\.com|accounts@hyatus\\.co)\\b",
+				"pattern": "(?=[\\s\\S]*\\bRoku \\| Activate your device\\b)(?=[\\s\\S]*\\bactivate your device\\b)(?=[\\s\\S]*my\\.roku\\.com(?:/|%2F)link(?:/|%2F)mail\\b)",
+				"flags": "i",
+				"folderId": "two-fa-dynamo",
+				"folderName": "Two FA Dynamo"
+			},
+			{
+				"name": "forewarn-login-code-two-fa",
+				"mailboxId": "ai@hyatusliving.com",
+				"fromPattern": "^do-not-reply@forewarn\\.com$",
+				"recipientPattern": "\\bai@hyatusliving\\.com\\b",
+				"pattern": "(?=[\\s\\S]*\\bFOREWARN Login Code\\b)(?=[\\s\\S]*\\bFOREWARN login code\\b)(?=[\\s\\S]*\\bTo complete your sign in\\b)(?=[\\s\\S]*\\b\\d{6}\\b)",
+				"flags": "i",
+				"folderId": "two-fa-dynamo",
+				"folderName": "Two FA Dynamo"
+			},
+			{
+				"name": "hulu-one-time-passcode-two-fa",
+				"mailboxId": "ai@hyatusliving.com",
+				"fromPattern": "^accounts-noreply@messaging\\.hulu\\.com$",
+				"recipientPattern": "\\bai@hyatusliving\\.com\\b",
+				"pattern": "(?=[\\s\\S]*\\bYour one-time passcode for Hulu\\b)(?=[\\s\\S]*\\bUse this passcode to verify\\b)(?=[\\s\\S]*\\bexpire in 5 minutes\\b)(?=[\\s\\S]*\\b\\d{6}\\b)",
+				"flags": "i",
+				"folderId": "two-fa-dynamo",
+				"folderName": "Two FA Dynamo"
+			},
+			{
+				"name": "hyatus-living-verification-passcode-two-fa",
+				"mailboxId": "ai@hyatusliving.com",
+				"fromPattern": "^reservations@hyatus\\.com$",
+				"recipientPattern": "\\bai@hyatusliving\\.com\\b",
+				"pattern": "(?=[\\s\\S]*\\bHyatus Living verification passcode\\b)(?=[\\s\\S]*\\bUse the passcode\\b)(?=[\\s\\S]*\\bto sign in to your Hyatus Living account\\b)(?=[\\s\\S]*\\b\\d{6}\\b)",
+				"flags": "i",
+				"folderId": "two-fa-dynamo",
+				"folderName": "Two FA Dynamo"
+			},
+			{
+				"name": "slack-confirmation-code-two-fa",
+				"mailboxId": "ai@hyatusliving.com",
+				"fromPattern": "^no-reply(?:-[a-z0-9]+)?@slack\\.com$",
+				"recipientPattern": "\\bcodex(?:10|[1-9])?@hyatusliving\\.com\\b",
+				"pattern": "(?=[\\s\\S]*\\bSlack confirmation code:\\s*[A-Z0-9-]+\\b)(?=[\\s\\S]*\\bConfirm your email address\\b)",
+				"flags": "i",
+				"folderId": "two-fa-dynamo",
+				"folderName": "Two FA Dynamo"
+			},
+			{
 				"name": "openai-chatgpt-two-fa",
 				"mailboxId": "ai@hyatusliving.com",
-				"fromPattern": "^(?:[^@\\s]+@(?:tm\\d*\\.)?openai\\.com|tm@openai\\.com)$",
-				"recipientPattern": "\\b(?:ai|codex(?:10|[1-9])?)@hyatusliving\\.com\\b",
-				"pattern": "(?=[\\s\\S]*\\bYour temporary ChatGPT (?:login|verification) code\\b)(?=[\\s\\S]*\\bEnter this temporary verification code to continue\\b)",
+				"fromPattern": "^(?:[^@\\s]+@(?:tm\\d*\\.)?openai\\.com|tm@openai\\.com|accounts@hyatus\\.com)$",
+				"recipientPattern": "\\b(?:ai|codex(?:10|[1-9])?)@hyatusliving\\.com\\b|\\baccounts@hyatus\\.com\\b",
+				"pattern": "(?=[\\s\\S]*\\bYour temporary (?:ChatGPT|OpenAI) (?:login|verification|password reset) code\\b)(?=[\\s\\S]*\\bEnter this temporary verification code to continue\\b)(?=[\\s\\S]*\\b\\d{6}\\b)",
 				"flags": "i",
 				"folderId": "two-fa-dynamo",
 				"folderName": "Two FA Dynamo"

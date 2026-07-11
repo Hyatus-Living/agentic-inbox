@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { getTwofaEmailMatch } from "../workers/twofa-routing.ts";
+import { getClaudeLoginSmsMatch, getTwofaEmailMatch } from "../workers/twofa-routing.ts";
 
 test("Autohost login verification emails are 2FA candidates", () => {
 	const searchText = [
@@ -79,5 +79,155 @@ test("OpenAI login code emails still match the existing 2FA route", () => {
 	assert.deepEqual(
 		getTwofaEmailMatch("noreply@tm.openai.com", searchText),
 		{ source: "openai", channel: "codex" },
+	);
+});
+
+test("OpenAI password reset code emails are 2FA candidates", () => {
+	const searchText = [
+		"Your temporary ChatGPT password reset code",
+		"Enter this temporary verification code to continue:",
+		"305126",
+	].join("\n");
+
+	assert.deepEqual(
+		getTwofaEmailMatch("noreply@tm.openai.com", searchText, ["codex4@hyatusliving.com"]),
+		{ source: "openai", channel: "codex" },
+	);
+});
+
+test("Forwarded OpenAI login code emails from accounts are 2FA candidates", () => {
+	const searchText = [
+		"Your temporary ChatGPT login code",
+		"Enter this temporary verification code to continue:",
+		"690165",
+	].join("\n");
+
+	assert.deepEqual(
+		getTwofaEmailMatch("accounts@hyatus.com", searchText, ["ai@hyatusliving.com", "accounts@hyatus.com"]),
+		{ source: "openai", channel: "codex" },
+	);
+});
+
+test("FOREWARN login code emails are 2FA candidates", () => {
+	const searchText = [
+		"FOREWARN Login Code",
+		"FOREWARN login code:",
+		"To complete your sign in, please enter the following code:",
+		"449042",
+	].join("\n");
+
+	assert.deepEqual(
+		getTwofaEmailMatch("do-not-reply@forewarn.com", searchText, ["ai@hyatusliving.com"]),
+		{ source: "forewarn", channel: "agentic-inbox" },
+	);
+});
+
+test("Hulu one-time passcode emails are 2FA candidates", () => {
+	const searchText = [
+		"Your one-time passcode for Hulu",
+		"Use this passcode to verify the email address associated with your MyDisney account.",
+		"It will expire in 5 minutes.",
+		"678057",
+	].join("\n");
+
+	assert.deepEqual(
+		getTwofaEmailMatch("accounts-noreply@messaging.hulu.com", searchText, ["ai@hyatusliving.com"]),
+		{ source: "hulu", channel: "agentic-inbox" },
+	);
+});
+
+test("Hyatus Living verification passcode emails are 2FA candidates", () => {
+	const searchText = [
+		"Hyatus Living verification passcode",
+		"Use the passcode 645987 to sign in to your Hyatus Living account.",
+		"This passcode expires in 10 minutes and can only be used once.",
+	].join("\n");
+
+	assert.deepEqual(
+		getTwofaEmailMatch("reservations@hyatus.com", searchText, ["ai@hyatusliving.com", "accounts@hyatus.com"]),
+		{ source: "hyatus-living", channel: "agentic-inbox" },
+	);
+});
+
+test("Slack confirmation code emails are 2FA candidates", () => {
+	const searchText = [
+		"Slack confirmation code: YWV-YVV",
+		"Confirm your email address.",
+		"Here’s your confirmation code.",
+	].join("\n");
+
+	assert.deepEqual(
+		getTwofaEmailMatch("no-reply-nhmlvluykgssc4lcs3cghrgg@slack.com", searchText, ["codex@hyatusliving.com"]),
+		{ source: "slack", channel: "agentic-inbox" },
+	);
+});
+
+test("Roku activation emails to AI/account recipients are 2FA candidates", () => {
+	const searchText = [
+		"Roku | Activate your device",
+		"Please activate your device",
+		"https://click.web.roku.com/CL0/https:%2F%2Fmy.roku.com%2Flink%2Fmail%2Fl2tzQ46DU/1/example",
+		"Activate Device",
+	].join("\n");
+
+	assert.deepEqual(
+		getTwofaEmailMatch("accounts@hyatus.com", searchText, ["ai@hyatusliving.com", "accounts@hyatus.co"]),
+		{ source: "roku", channel: "agentic-inbox" },
+	);
+});
+
+test("Roku activation emails to unrelated recipients are not 2FA candidates", () => {
+	const searchText = [
+		"Roku | Activate your device",
+		"Please activate your device",
+		"https://click.web.roku.com/CL0/https:%2F%2Fmy.roku.com%2Flink%2Fmail%2Fl2tzQ46DU/1/example",
+	].join("\n");
+
+	assert.equal(
+		getTwofaEmailMatch("accounts@hyatus.com", searchText, ["purchases@hyatusliving.com"]),
+		null,
+	);
+});
+
+test("Claude login links for claude@hyatusliving.com are SMS candidates", () => {
+	const searchText = [
+		"Secure link to log in to Claude.ai | 2026-07-08 11:12:09",
+		"Sign in to Claude.ai",
+		"https://claude.ai/magic-link?client=desktop_app#token:recipient",
+	].join("\n");
+
+	assert.deepEqual(
+		getClaudeLoginSmsMatch("no-reply-whzxq237vkachqaeahx1wa@mail.anthropic.com", ["claude@hyatusliving.com"], searchText),
+		{
+			service: "Claude",
+			recipient: "claude@hyatusliving.com",
+			link: "https://claude.ai/magic-link?client=desktop_app#token:recipient",
+		},
+	);
+});
+
+test("Claude login links for other recipients are not SMS candidates", () => {
+	const searchText = [
+		"Secure link to log in to Claude.ai | 2026-07-08 11:12:09",
+		"Sign in to Claude.ai",
+		"https://claude.ai/magic-link?client=desktop_app#token:recipient",
+	].join("\n");
+
+	assert.equal(
+		getClaudeLoginSmsMatch("no-reply-whzxq237vkachqaeahx1wa@mail.anthropic.com", ["ai@hyatusliving.com"], searchText),
+		null,
+	);
+});
+
+test("Claude login text from the wrong sender is not an SMS candidate", () => {
+	const searchText = [
+		"Secure link to log in to Claude.ai | 2026-07-08 11:12:09",
+		"Sign in to Claude.ai",
+		"https://claude.ai/magic-link?client=desktop_app#token:recipient",
+	].join("\n");
+
+	assert.equal(
+		getClaudeLoginSmsMatch("attacker@example.com", ["claude@hyatusliving.com"], searchText),
+		null,
 	);
 });
