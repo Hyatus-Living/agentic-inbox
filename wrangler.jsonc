@@ -21,7 +21,15 @@
 		// TEAM_DOMAIN may be the base Access URL or the full /cdn-cgi/access/certs URL.
 		// The worker now fails closed outside local development if Access is not configured.
 		"DOMAINS": "hyatusliving.com",
+		// Alias domains funnel ALL of their mail (any local part) into the single
+		// managed catch-all mailbox below. Nothing is forwarded or dropped.
+		"ALIAS_DOMAINS": [
+			"hyatusstays.com",
+			"hyatus.org"
+		],
+		"ALIAS_DOMAIN_MAILBOX": "catch-all@hyatusliving.com",
 		"EMAIL_ADDRESSES": [
+			"catch-all@hyatusliving.com",
 			"ai@hyatusliving.com",
 			"codex@hyatusliving.com",
 			"codex1@hyatusliving.com",
