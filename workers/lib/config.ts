@@ -49,6 +49,34 @@ export function getEmailAddressAliases(env: { EMAIL_ADDRESS_ALIASES?: unknown })
 	);
 }
 
+// Alias domains funnel ALL of their mail into a single managed catch-all mailbox
+// (ALIAS_DOMAIN_MAILBOX). Any recipient at an alias domain — regardless of local
+// part — is delivered to that one mailbox; nothing is forwarded or dropped. This
+// keeps the alias domains fully decoupled from the canonical domain's routing.
+export function getAliasDomains(env: { ALIAS_DOMAINS?: unknown }): string[] {
+	const raw = env.ALIAS_DOMAINS;
+	if (Array.isArray(raw)) return raw.map((d) => String(d).toLowerCase());
+	if (typeof raw === "string") {
+		const trimmed = raw.trim();
+		if (!trimmed) return [];
+		if (trimmed.startsWith("[")) {
+			return (JSON.parse(trimmed) as string[]).map((d) => d.toLowerCase());
+		}
+		return trimmed.split(",").map((d) => d.trim().toLowerCase()).filter(Boolean);
+	}
+	return [];
+}
+
+export function getAliasDomainMailbox(env: { ALIAS_DOMAIN_MAILBOX?: unknown }): string {
+	const raw = env.ALIAS_DOMAIN_MAILBOX;
+	return typeof raw === "string" ? raw.trim().toLowerCase() : "";
+}
+
+function domainOf(address: string): string {
+	const at = address.lastIndexOf("@");
+	return at >= 0 ? address.slice(at + 1) : "";
+}
+
 export function getConfiguredMailboxIds(env: { EMAIL_ADDRESSES?: unknown; EMAIL_ADDRESS_ALIASES?: unknown }): string[] {
 	const aliases = getEmailAddressAliases(env);
 	const aliasAddresses = new Set(Object.keys(aliases));
@@ -61,7 +89,7 @@ export function getConfiguredMailboxIds(env: { EMAIL_ADDRESSES?: unknown; EMAIL_
 }
 
 export function resolveMailboxForRecipients(
-	env: { EMAIL_ADDRESSES?: unknown; EMAIL_ADDRESS_ALIASES?: unknown },
+	env: { EMAIL_ADDRESSES?: unknown; EMAIL_ADDRESS_ALIASES?: unknown; ALIAS_DOMAINS?: unknown; ALIAS_DOMAIN_MAILBOX?: unknown },
 	recipients: string[],
 ): { recipientAddress: string; mailboxId: string } | undefined {
 	const aliases = getEmailAddressAliases(env);
@@ -69,9 +97,21 @@ export function resolveMailboxForRecipients(
 		...getConfiguredEmailAddresses(env),
 		...Object.keys(aliases),
 	]);
-	const recipientAddress = recipients.map((addr) => addr.toLowerCase()).find((addr) => acceptedAddresses.has(addr));
-	if (!recipientAddress) return undefined;
-	return { recipientAddress, mailboxId: aliases[recipientAddress] ?? recipientAddress };
+	const lowered = recipients.map((addr) => addr.toLowerCase());
+
+	// 1) An explicitly configured address (canonical-domain mailbox or per-address alias).
+	const direct = lowered.find((addr) => acceptedAddresses.has(addr));
+	if (direct) return { recipientAddress: direct, mailboxId: aliases[direct] ?? direct };
+
+	// 2) Any recipient at an alias domain -> the shared catch-all mailbox (all local parts).
+	const aliasDomains = getAliasDomains(env);
+	const aliasMailbox = getAliasDomainMailbox(env);
+	if (aliasMailbox && aliasDomains.length) {
+		const aliasHit = lowered.find((addr) => aliasDomains.includes(domainOf(addr)));
+		if (aliasHit) return { recipientAddress: aliasHit, mailboxId: aliasMailbox };
+	}
+
+	return undefined;
 }
 
 export function getContentForwardRules(env: { CONTENT_FORWARD_RULES?: unknown }): ContentForwardRule[] {
