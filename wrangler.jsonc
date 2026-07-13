@@ -157,6 +157,13 @@
 				"principalId": "687101efd9c5f56aff9fb7478c2d15da.access",
 				"role": "service_agent",
 				"label": "Codex agent service token"
+			},
+			{
+				"mailboxId": "ai@hyatusliving.com",
+				"principalType": "service_token",
+				"principalId": "7a5c23202a8410d74904dbc159b6b1df.access",
+				"role": "service_agent",
+				"label": "Codex mail audit service token"
 			}
 		]
 	},
