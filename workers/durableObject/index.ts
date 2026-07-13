@@ -670,7 +670,7 @@ export class MailboxDO extends DurableObject<Env> {
 		const managedFolderIds = new Set(rules.map((rule) => rule.folderId));
 
 		for (const rule of rules) {
-			const folderName = rule.folderName ?? rule.folderId;
+			const folderName = rule.folderName ?? (rule.folderId === "two-fa-dynamo" ? "2FA" : rule.folderId);
 			const created = await this.createFolder(rule.folderId, folderName);
 			if (!created) await this.updateFolder(rule.folderId, folderName);
 		}

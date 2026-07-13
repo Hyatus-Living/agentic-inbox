@@ -561,7 +561,7 @@ type ContentLabelFolderStub = {
 };
 
 async function ensureContentLabelFolderName(stub: ContentLabelFolderStub, rule: ContentLabelRule) {
-	const name = rule.folderName ?? rule.folderId;
+	const name = rule.folderName ?? (rule.folderId === "two-fa-dynamo" ? "2FA" : rule.folderId);
 	const created = await stub.createFolder(rule.folderId, name);
 	if (!created) await stub.updateFolder(rule.folderId, name);
 }
