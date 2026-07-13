@@ -97,6 +97,7 @@
 		"REVIEW_REMOVAL_URL": "https://gn6slmok95.execute-api.us-east-1.amazonaws.com/dev/admin-api/review-removal",
 		"AIRBNB_REVIEW_REMOVAL_URL": "https://gn6slmok95.execute-api.us-east-1.amazonaws.com/dev/admin-api/airbnb-review-removal",
 		"TWOFA_POST_URL": "https://kjc0ypdntl.execute-api.us-east-1.amazonaws.com/dev/api/twofa",
+		"TWOFA_SMS_WEBHOOK_URL": "https://twilio-theta-liart.vercel.app/api/twofa/claude-link-sms",
 		"CONTENT_LABEL_RULES": [
 			{
 				"name": "autoprocess-inbound",
@@ -117,14 +118,114 @@
 				"folderName": "Keycafe"
 			},
 			{
-				"name": "openai-chatgpt-two-fa",
+				"name": "github-verify-device-two-fa",
 				"mailboxId": "ai@hyatusliving.com",
-				"fromPattern": "^(?:[^@\\s]+@(?:tm\\d*\\.)?openai\\.com|tm@openai\\.com)$",
-				"recipientPattern": "\\b(?:ai|codex(?:10|[1-9])?)@hyatusliving\\.com\\b",
-				"pattern": "(?=[\\s\\S]*\\bYour temporary ChatGPT (?:login|verification) code\\b)(?=[\\s\\S]*\\bEnter this temporary verification code to continue\\b)",
+				"fromPattern": "^noreply@github\\.com$",
+				"recipientPattern": "\\b(?:ai@hyatusliving\\.com|codex@hyatus\\.com)\\b",
+				"pattern": "(?=[\\s\\S]*\\[GitHub\\] Please verify your device)(?=[\\s\\S]*\\bA sign in attempt requires further verification\\b)(?=[\\s\\S]*\\bwe did not recognize your device\\b)(?=[\\s\\S]*\\bVerification code:\\s*\\d{6}\\b)",
 				"flags": "i",
 				"folderId": "two-fa-dynamo",
-				"folderName": "Two FA Dynamo"
+				"folderName": "2FA"
+			},
+			{
+				"name": "starlink-verification-code-two-fa",
+				"mailboxId": "ai@hyatusliving.com",
+				"fromPattern": "^(?:no-reply@starlink\\.com|accounts@hyatus\\.com)$",
+				"recipientPattern": "\\b(?:ai@hyatusliving\\.com|accounts@hyatus\\.com)\\b",
+				"pattern": "(?=[\\s\\S]*\\bYour Starlink verification code\\b)(?=[\\s\\S]*\\bUse code\\s+\\d{6}\\s+to verify your identity with Starlink\\b)(?=[\\s\\S]*\\bexpire in 15 minutes\\b)",
+				"flags": "i",
+				"folderId": "two-fa-dynamo",
+				"folderName": "2FA"
+			},
+			{
+				"name": "bilt-verification-code-two-fa",
+				"mailboxId": "ai@hyatusliving.com",
+				"fromPattern": "^no-reply@otp2\\.bilt\\.com$",
+				"recipientPattern": "\\bai@hyatusliving\\.com\\b",
+				"pattern": "(?=[\\s\\S]*\\bBilt Verification Code\\b)(?=[\\s\\S]*\\bYour one-time passcode is\\s+\\d{4,8}\\b)(?=[\\s\\S]*\\brequested a verification code for your account\\b)",
+				"flags": "i",
+				"folderId": "two-fa-dynamo",
+				"folderName": "2FA"
+			},
+			{
+				"name": "rentcafe-login-otp-two-fa",
+				"mailboxId": "ai@hyatusliving.com",
+				"fromPattern": "^no-reply@rentcafe\\.com$",
+				"recipientPattern": "\\bai@hyatusliving\\.com\\b",
+				"pattern": "(?=[\\s\\S]*\\bOTP for login\\b)(?=[\\s\\S]*\\b\\d{4,8}\\s+is your one-time password \\(OTP\\) for login\\b)(?=[\\s\\S]*\\bvalid for 10 minutes\\b)",
+				"flags": "i",
+				"folderId": "two-fa-dynamo",
+				"folderName": "2FA"
+			},
+			{
+				"name": "claude-login-link-two-fa",
+				"mailboxId": "ai@hyatusliving.com",
+				"fromPattern": "^no-reply(?:-[a-z0-9-]+)?@(?:[a-z0-9-]+\\.)*anthropic\\.com$",
+				"recipientPattern": "\\bclaude@hyatusliving\\.com\\b",
+				"pattern": "(?=[\\s\\S]*\\bSecure link to log in to Claude\\.ai\\b)(?=[\\s\\S]*\\bSign in to Claude\\.ai\\b)(?=[\\s\\S]*\\bclaude\\.ai/magic-link\\b)",
+				"flags": "i",
+				"folderId": "two-fa-dynamo",
+				"folderName": "2FA"
+			},
+			{
+				"name": "roku-activate-device-two-fa",
+				"mailboxId": "ai@hyatusliving.com",
+				"fromPattern": "^accounts@hyatus\\.com$",
+				"recipientPattern": "\\b(?:ai@hyatusliving\\.com|accounts@hyatus\\.co)\\b",
+				"pattern": "(?=[\\s\\S]*\\bRoku \\| Activate your device\\b)(?=[\\s\\S]*\\bactivate your device\\b)(?=[\\s\\S]*my\\.roku\\.com(?:/|%2F)link(?:/|%2F)mail\\b)",
+				"flags": "i",
+				"folderId": "two-fa-dynamo",
+				"folderName": "2FA"
+			},
+			{
+				"name": "forewarn-login-code-two-fa",
+				"mailboxId": "ai@hyatusliving.com",
+				"fromPattern": "^do-not-reply@forewarn\\.com$",
+				"recipientPattern": "\\bai@hyatusliving\\.com\\b",
+				"pattern": "(?=[\\s\\S]*\\bFOREWARN Login Code\\b)(?=[\\s\\S]*\\bFOREWARN login code\\b)(?=[\\s\\S]*\\benter the following code\\b)(?=[\\s\\S]*\\b\\d{6}\\b)",
+				"flags": "i",
+				"folderId": "two-fa-dynamo",
+				"folderName": "2FA"
+			},
+			{
+				"name": "hulu-one-time-passcode-two-fa",
+				"mailboxId": "ai@hyatusliving.com",
+				"fromPattern": "^accounts-noreply@messaging\\.hulu\\.com$",
+				"recipientPattern": "\\bai@hyatusliving\\.com\\b",
+				"pattern": "(?=[\\s\\S]*\\bYour one-time passcode for Hulu\\b)(?=[\\s\\S]*\\bUse this passcode to verify\\b)(?=[\\s\\S]*\\bexpire in 5 minutes\\b)(?=[\\s\\S]*\\b\\d{6}\\b)",
+				"flags": "i",
+				"folderId": "two-fa-dynamo",
+				"folderName": "2FA"
+			},
+			{
+				"name": "hyatus-living-verification-passcode-two-fa",
+				"mailboxId": "ai@hyatusliving.com",
+				"fromPattern": "^reservations@hyatus\\.com$",
+				"recipientPattern": "\\bai@hyatusliving\\.com\\b",
+				"pattern": "(?=[\\s\\S]*\\bHyatus Living verification passcode\\b)(?=[\\s\\S]*\\bUse the passcode\\b)(?=[\\s\\S]*\\bto sign in to your Hyatus Living account\\b)(?=[\\s\\S]*\\b\\d{6}\\b)",
+				"flags": "i",
+				"folderId": "two-fa-dynamo",
+				"folderName": "2FA"
+			},
+			{
+				"name": "slack-confirmation-code-two-fa",
+				"mailboxId": "ai@hyatusliving.com",
+				"fromPattern": "^no-reply(?:-[a-z0-9]+)?@slack\\.com$",
+				"recipientPattern": "\\bcodex(?:10|[1-9])?@hyatusliving\\.com\\b",
+				"pattern": "(?=[\\s\\S]*\\bSlack confirmation code:\\s*[A-Z0-9-]+\\b)(?=[\\s\\S]*\\bConfirm your email address\\b)",
+				"flags": "i",
+				"folderId": "two-fa-dynamo",
+				"folderName": "2FA"
+			},
+			{
+				"name": "openai-chatgpt-two-fa",
+				"mailboxId": "ai@hyatusliving.com",
+				"fromPattern": "^(?:[^@\\s]+@(?:tm\\d*\\.)?openai\\.com|tm@openai\\.com|accounts@hyatus\\.com)$",
+				"recipientPattern": "\\b(?:ai|codex(?:10|[1-9])?)@hyatusliving\\.com\\b|\\baccounts@hyatus\\.com\\b",
+				"pattern": "(?=[\\s\\S]*\\bYour temporary (?:ChatGPT|OpenAI) (?:login|verification|password reset) code\\b)(?=[\\s\\S]*\\bEnter this temporary verification code to continue\\b)(?=[\\s\\S]*\\b\\d{6}\\b)",
+				"flags": "i",
+				"folderId": "two-fa-dynamo",
+				"folderName": "2FA"
 			},
 			{
 				"name": "autohost-login-two-fa",
@@ -134,7 +235,7 @@
 				"pattern": "(?=[\\s\\S]*\\bYour Autohost login verification code\\b)(?=[\\s\\S]*\\bPlease verify your login attempt\\b)(?=[\\s\\S]*\\bverification code below\\b[\\s\\S]{0,1200}\\b\\d{6}\\b)",
 				"flags": "i",
 				"folderId": "two-fa-dynamo",
-				"folderName": "Two FA Dynamo"
+				"folderName": "2FA"
 			},
 			{
 				"name": "mmt-one-time-passcode-two-fa",
@@ -144,7 +245,7 @@
 				"pattern": "(?=[\\s\\S]*\\bOTP\\b)(?=[\\s\\S]*\\b(?:one-time passcode|use the below one-time passcode)\\b)(?=[\\s\\S]*\\b\\d{4,8}\\b)",
 				"flags": "i",
 				"folderId": "two-fa-dynamo",
-				"folderName": "Two FA Dynamo"
+				"folderName": "2FA"
 			}
 		],
 		"INBOUND_ONLY": "true",

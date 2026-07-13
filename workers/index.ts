@@ -38,7 +38,7 @@ import {
 	shouldExtractReviewRemoval,
 	shouldUseOuterReviewRemovalCandidate,
 } from "./review-removal-routing";
-import { getTwofaEmailMatch } from "./twofa-routing";
+import { getClaudeLoginSmsMatch, getTwofaEmailMatch } from "./twofa-routing";
 
 type AppContext = Context<MailboxContext>;
 
@@ -555,16 +555,27 @@ function findContentLabelRule(env: Env, mailboxId: string, fromAddress: string, 
 	});
 }
 
-async function ensureContentLabelFolders(stub: { createFolder: (id: string, name: string) => Promise<unknown> }, env: Env, mailboxId: string) {
+type ContentLabelFolderStub = {
+	createFolder: (id: string, name: string) => Promise<unknown>;
+	updateFolder: (id: string, name: string) => Promise<unknown>;
+};
+
+async function ensureContentLabelFolderName(stub: ContentLabelFolderStub, rule: ContentLabelRule) {
+	const name = rule.folderName ?? rule.folderId;
+	const created = await stub.createFolder(rule.folderId, name);
+	if (!created) await stub.updateFolder(rule.folderId, name);
+}
+
+async function ensureContentLabelFolders(stub: ContentLabelFolderStub, env: Env, mailboxId: string) {
 	const rules = getContentLabelRules(env).filter((rule) => rule.mailboxId.toLowerCase() === mailboxId);
 	for (const rule of rules) {
-		await stub.createFolder(rule.folderId, rule.folderName ?? rule.folderId);
+		await ensureContentLabelFolderName(stub, rule);
 	}
 }
 
-async function ensureContentLabelFolder(stub: { createFolder: (id: string, name: string) => Promise<unknown> }, rule: ContentLabelRule | undefined) {
+async function ensureContentLabelFolder(stub: ContentLabelFolderStub, rule: ContentLabelRule | undefined) {
 	if (!rule) return;
-	await stub.createFolder(rule.folderId, rule.folderName ?? rule.folderId);
+	await ensureContentLabelFolderName(stub, rule);
 }
 
 async function postAutoprocessWebhook(env: Env, rawEmail: Uint8Array, context: {
@@ -863,6 +874,32 @@ async function postTwofaEmail(env: Env, emailText: string, context: {
 	if (!response.ok) throw new Error(`2FA post failed with status ${response.status}`);
 }
 
+async function postTwofaSms(env: Env, payload: {
+	service: string;
+	recipient: string;
+	link: string;
+	messageId: string;
+	receivedAt: string;
+}) {
+	if (!env.TWOFA_SMS_WEBHOOK_URL) throw new Error("TWOFA_SMS_WEBHOOK_URL is required for 2FA SMS processing");
+	if (!env.TWOFA_SMS_WEBHOOK_KEY) throw new Error("TWOFA_SMS_WEBHOOK_KEY is required for 2FA SMS processing");
+	const response = await fetch(env.TWOFA_SMS_WEBHOOK_URL, {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+			"x-api-key": env.TWOFA_SMS_WEBHOOK_KEY,
+		},
+		body: JSON.stringify({
+			service: payload.service,
+			recipient: payload.recipient,
+			link: payload.link,
+			receivedAt: payload.receivedAt,
+			sourceEmailId: payload.messageId,
+		}),
+	});
+	if (!response.ok) throw new Error(`2FA SMS webhook failed with status ${response.status}`);
+}
+
 function emailSearchText(email: { subject?: string; text?: string; html?: string }) {
 	return [
 		email.subject || "",
@@ -1035,7 +1072,7 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 		).catch((e) => console.error("Keycafe status extraction failed:", (e as Error).message)));
 	}
 
-	const twofaEmailMatch = getTwofaEmailMatch(fromAddress, forwardingSearchText);
+	const twofaEmailMatch = getTwofaEmailMatch(fromAddress, forwardingSearchText, allRecipients);
 	if (twofaEmailMatch) {
 		ctx.waitUntil(postTwofaEmail(env, parsedEmail.html || parsedEmail.text || forwardingSearchText, {
 			messageId,
@@ -1046,6 +1083,15 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 			source: twofaEmailMatch.source,
 			channel: twofaEmailMatch.channel,
 		}).catch((e) => console.error("2FA post failed:", (e as Error).message)));
+	}
+
+	const claudeLoginSmsMatch = getClaudeLoginSmsMatch(fromAddress, allRecipients, forwardingSearchText);
+	if (claudeLoginSmsMatch) {
+		ctx.waitUntil(postTwofaSms(env, {
+			...claudeLoginSmsMatch,
+			messageId,
+			receivedAt: new Date().toISOString(),
+		}).catch((e) => console.error("2FA SMS webhook failed:", (e as Error).message)));
 	}
 
 	if (isAutoDraftEnabled(env)) {

@@ -22,6 +22,9 @@
 		"cf-typegen": "wrangler types",
 		"deploy": "npm run build && wrangler deploy",
 		"dev": "NODE_OPTIONS='--disable-warning=DEP0205' react-router dev",
+		"inbox": "node scripts/agentic-inbox-cli.mjs",
+		"inbox:folders": "node scripts/agentic-inbox-cli.mjs folders",
+		"inbox:backfill-labels": "node scripts/agentic-inbox-cli.mjs backfill-labels",
 		"preview": "npm run build && vite preview",
 		"configure-autoprocess-routing": "./scripts/configure-autoprocess-routing.sh",
 		"typecheck": "npm run cf-typegen && NODE_OPTIONS='--disable-warning=DEP0205' react-router typegen && tsc -b"

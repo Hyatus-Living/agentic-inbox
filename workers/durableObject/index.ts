@@ -670,7 +670,9 @@ export class MailboxDO extends DurableObject<Env> {
 		const managedFolderIds = new Set(rules.map((rule) => rule.folderId));
 
 		for (const rule of rules) {
-			await this.createFolder(rule.folderId, rule.folderName ?? rule.folderId);
+			const folderName = rule.folderName ?? rule.folderId;
+			const created = await this.createFolder(rule.folderId, folderName);
+			if (!created) await this.updateFolder(rule.folderId, folderName);
 		}
 
 		const rows = [...this.ctx.storage.sql.exec(

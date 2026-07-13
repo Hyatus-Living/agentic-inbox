@@ -205,6 +205,21 @@ curl -X POST "https://codex-inbox.hyatusliving.com/api/v1/mailboxes/ai%40hyatusl
 
 Backfill only applies deployed `CONTENT_LABEL_RULES`; callers cannot submit ad hoc regexes or arbitrary target folders.
 
+For operational audits, use the service-token CLI instead of browser sessions:
+
+```bash
+export CF_ACCESS_CLIENT_ID="client-id.access"
+export CF_ACCESS_CLIENT_SECRET="client-secret"
+
+npm run inbox:folders
+npm run inbox -- emails --folder inbox --all
+npm run inbox -- search "login code" --all
+npm run inbox -- get "email-id"
+npm run inbox:backfill-labels
+```
+
+The CLI calls the production `/api/v1/mailboxes/:mailboxId/*` API with Cloudflare Access service-token headers and handles API pagination. Read/list/search work with a granted `service_agent` token. Arbitrary email moves still require super-admin authorization; use deployed `CONTENT_LABEL_RULES` plus `inbox:backfill-labels` for safe bulk relabeling.
+
 ### Deploy
 
 ```bash
