@@ -939,7 +939,12 @@ async function getAutoprocessAttachmentCandidates(
 	return candidates;
 }
 
-async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: ExecutionContext) {
+async function receiveEmail(
+	message: ForwardableEmailMessage,
+	env: Env,
+	ctx: ExecutionContext,
+	mailboxIdOverride?: string,
+) {
 	const rawEmail = await streamToArrayBuffer(message.raw, message.rawSize);
 	const parsedEmail = await new PostalMime().parse(rawEmail);
 
@@ -952,7 +957,9 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 	const ccRecipients = (parsedEmail.cc || []).map((e) => e.address?.toLowerCase()).filter(Boolean) as string[];
 	const bccRecipients = (parsedEmail.bcc || []).map((e) => e.address?.toLowerCase()).filter(Boolean) as string[];
 
-	const mailboxResolution = allowedAddresses.length > 0
+	const mailboxResolution = mailboxIdOverride
+		? { recipientAddress: allRecipients[0], mailboxId: mailboxIdOverride }
+		: allowedAddresses.length > 0
 		? resolveMailboxForRecipients(env, allRecipients)
 		: { recipientAddress: allRecipients[0], mailboxId: allRecipients[0] };
 	if (!mailboxResolution?.mailboxId) {
