@@ -155,8 +155,7 @@
 			{
 				"name": "roku-activate-device-two-fa",
 				"mailboxId": "ai@hyatusliving.com",
-				"fromPattern": "^accounts@hyatus\\.com$",
-				"recipientPattern": "\\b(?:ai@hyatusliving\\.com|accounts@hyatus\\.co)\\b",
+				"fromPattern": "^(?:noreply@roku\\.com|accounts@hyatus\\.com)$",
 				"pattern": "(?=[\\s\\S]*\\bRoku \\| Activate your device\\b)(?=[\\s\\S]*\\bactivate your device\\b)(?=[\\s\\S]*my\\.roku\\.com(?:/|%2F)link(?:/|%2F)mail\\b)",
 				"folderId": "two-fa-dynamo"
 			},

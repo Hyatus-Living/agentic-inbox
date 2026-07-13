@@ -234,7 +234,7 @@ test("Slack confirmation code emails are 2FA candidates", () => {
 	);
 });
 
-test("Roku activation emails to AI/account recipients are 2FA candidates", () => {
+test("direct Roku activation emails to unit recipients are 2FA candidates", () => {
 	const searchText = [
 		"Roku | Activate your device",
 		"Please activate your device",
@@ -243,12 +243,25 @@ test("Roku activation emails to AI/account recipients are 2FA candidates", () =>
 	].join("\n");
 
 	assert.deepEqual(
-		getTwofaEmailMatch("accounts@hyatus.com", searchText, ["ai@hyatusliving.com", "accounts@hyatus.co"]),
+		getTwofaEmailMatch("noreply@roku.com", searchText, ["ev554ma@hyatusliving.com"]),
 		{ source: "roku", channel: "agentic-inbox" },
 	);
 });
 
-test("Roku activation emails to unrelated recipients are not 2FA candidates", () => {
+test("Accounts-forwarded Roku activation emails remain 2FA candidates for any recipient", () => {
+	const searchText = [
+		"Roku | Activate your device",
+		"Please activate your device",
+		"https://click.web.roku.com/CL0/https:%2F%2Fmy.roku.com%2Flink%2Fmail%2Fl2tzQ46DU/1/example",
+	].join("\n");
+
+	assert.deepEqual(
+		getTwofaEmailMatch("accounts@hyatus.com", searchText, ["purchases@hyatusliving.com"]),
+		{ source: "roku", channel: "agentic-inbox" },
+	);
+});
+
+test("Roku activation text from another sender is not a 2FA candidate", () => {
 	const searchText = [
 		"Roku | Activate your device",
 		"Please activate your device",
@@ -256,7 +269,7 @@ test("Roku activation emails to unrelated recipients are not 2FA candidates", ()
 	].join("\n");
 
 	assert.equal(
-		getTwofaEmailMatch("accounts@hyatus.com", searchText, ["purchases@hyatusliving.com"]),
+		getTwofaEmailMatch("attacker@example.com", searchText, ["ev554ma@hyatusliving.com"]),
 		null,
 	);
 });

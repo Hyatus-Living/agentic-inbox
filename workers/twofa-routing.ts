@@ -18,9 +18,8 @@ const HULU_TWOFA_FROM_PATTERN = /^accounts-noreply@messaging\.hulu\.com$/i;
 const HULU_TWOFA_TEXT_PATTERN = /(?=[\s\S]*\bYour one-time passcode for Hulu\b)(?=[\s\S]*\bUse this passcode to verify\b)(?=[\s\S]*\bexpire in 5 minutes\b)(?=[\s\S]*\b\d{6}\b)/i;
 const HYATUS_LIVING_TWOFA_FROM_PATTERN = /^reservations@hyatus\.com$/i;
 const HYATUS_LIVING_TWOFA_TEXT_PATTERN = /(?=[\s\S]*\bHyatus Living verification passcode\b)(?=[\s\S]*\bUse the passcode\b)(?=[\s\S]*\bto sign in to your Hyatus Living account\b)(?=[\s\S]*\b\d{6}\b)/i;
-const ROKU_TWOFA_FROM_PATTERN = /^accounts@hyatus\.com$/i;
+const ROKU_TWOFA_FROM_PATTERN = /^(?:noreply@roku\.com|accounts@hyatus\.com)$/i;
 const ROKU_TWOFA_TEXT_PATTERN = /(?=[\s\S]*\bRoku \| Activate your device\b)(?=[\s\S]*\bactivate your device\b)(?=[\s\S]*my\.roku\.com(?:\/|%2F)link(?:\/|%2F)mail\b)/i;
-const ROKU_TWOFA_RECIPIENTS = new Set(["ai@hyatusliving.com", "accounts@hyatus.co"]);
 const SLACK_TWOFA_FROM_PATTERN = /^no-reply(?:-[a-z0-9]+)?@slack\.com$/i;
 const SLACK_TWOFA_TEXT_PATTERN = /(?=[\s\S]*\bSlack confirmation code:\s*[A-Z0-9-]+\b)(?=[\s\S]*\bConfirm your email address\b)/i;
 const CLAUDE_LOGIN_RECIPIENT = "claude@hyatusliving.com";
@@ -33,11 +32,7 @@ export interface TwofaEmailMatch {
 	channel: string;
 }
 
-function hasAnyRecipient(recipients: string[], allowedRecipients: Set<string>) {
-	return recipients.some((recipient) => allowedRecipients.has(recipient.toLowerCase()));
-}
-
-export function getTwofaEmailMatch(fromAddress: string, searchText: string, recipients: string[] = []): TwofaEmailMatch | null {
+export function getTwofaEmailMatch(fromAddress: string, searchText: string, _recipients: string[] = []): TwofaEmailMatch | null {
 	if (OPENAI_TWOFA_FROM_PATTERN.test(fromAddress) && OPENAI_TWOFA_TEXT_PATTERN.test(searchText)) {
 		return { source: "openai", channel: "codex" };
 	}
@@ -68,7 +63,7 @@ export function getTwofaEmailMatch(fromAddress: string, searchText: string, reci
 	if (HYATUS_LIVING_TWOFA_FROM_PATTERN.test(fromAddress) && HYATUS_LIVING_TWOFA_TEXT_PATTERN.test(searchText)) {
 		return { source: "hyatus-living", channel: "agentic-inbox" };
 	}
-	if (ROKU_TWOFA_FROM_PATTERN.test(fromAddress) && hasAnyRecipient(recipients, ROKU_TWOFA_RECIPIENTS) && ROKU_TWOFA_TEXT_PATTERN.test(searchText)) {
+	if (ROKU_TWOFA_FROM_PATTERN.test(fromAddress) && ROKU_TWOFA_TEXT_PATTERN.test(searchText)) {
 		return { source: "roku", channel: "agentic-inbox" };
 	}
 	if (SLACK_TWOFA_FROM_PATTERN.test(fromAddress) && SLACK_TWOFA_TEXT_PATTERN.test(searchText)) {
