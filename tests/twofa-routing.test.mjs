@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { performance } from "node:perf_hooks";
 import test from "node:test";
 
 import { getClaudeLoginSmsMatch, getTwofaEmailMatch } from "../workers/twofa-routing.ts";
@@ -259,6 +260,59 @@ test("Accounts-forwarded Roku activation emails remain 2FA candidates for any re
 		getTwofaEmailMatch("accounts@hyatus.com", searchText, ["purchases@hyatusliving.com"]),
 		{ source: "roku", channel: "agentic-inbox" },
 	);
+});
+
+test("direct Roku sign-in codes to unit recipients are 2FA candidates", () => {
+	const searchText = [
+		"Roku | Signing in on July 14, 2026 5:12 PM EDT?",
+		"Signing in?",
+		"Are you trying to sign in to your Roku account? We want to make sure it’s you.",
+		"Enter the following code to finish signing in:",
+		"123456",
+	].join("\n");
+
+	assert.deepEqual(
+		getTwofaEmailMatch("noreply@roku.com", searchText, ["the-lore@hyatusliving.com"]),
+		{ source: "roku", channel: "agentic-inbox" },
+	);
+});
+
+test("Accounts-forwarded Roku sign-in codes remain 2FA candidates", () => {
+	const searchText = [
+		"Roku | Signing in on July 14, 2026 5:12 PM EDT?",
+		"Are you trying to sign in to your Roku account?",
+		"Enter the following code to finish signing in:",
+		"123456",
+	].join("\n");
+
+	assert.deepEqual(
+		getTwofaEmailMatch("accounts@hyatus.com", searchText, ["ai@hyatusliving.com"]),
+		{ source: "roku", channel: "agentic-inbox" },
+	);
+});
+
+test("incomplete Roku sign-in notices are not 2FA candidates", () => {
+	const searchText = [
+		"Roku | Signing in on July 14, 2026 5:12 PM EDT?",
+		"Are you trying to sign in to your Roku account?",
+		"Contact Roku support if this was not you.",
+	].join("\n");
+
+	assert.equal(
+		getTwofaEmailMatch("noreply@roku.com", searchText, ["the-lore@hyatusliving.com"]),
+		null,
+	);
+});
+
+test("large non-auth Roku messages do not trigger a pathological regex scan", () => {
+	const searchText = `Roku account update\n${"x".repeat(50_000)}`;
+	const startedAt = performance.now();
+
+	assert.equal(
+		getTwofaEmailMatch("noreply@roku.com", searchText, ["the-lore@hyatusliving.com"]),
+		null,
+	);
+	assert.ok(performance.now() - startedAt < 250);
 });
 
 test("Roku activation text from another sender is not a 2FA candidate", () => {

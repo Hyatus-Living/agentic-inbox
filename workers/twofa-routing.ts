@@ -19,7 +19,8 @@ const HULU_TWOFA_TEXT_PATTERN = /(?=[\s\S]*\bYour one-time passcode for Hulu\b)(
 const HYATUS_LIVING_TWOFA_FROM_PATTERN = /^reservations@hyatus\.com$/i;
 const HYATUS_LIVING_TWOFA_TEXT_PATTERN = /(?=[\s\S]*\bHyatus Living verification passcode\b)(?=[\s\S]*\bUse the passcode\b)(?=[\s\S]*\bto sign in to your Hyatus Living account\b)(?=[\s\S]*\b\d{6}\b)/i;
 const ROKU_TWOFA_FROM_PATTERN = /^(?:noreply@roku\.com|accounts@hyatus\.com)$/i;
-const ROKU_TWOFA_TEXT_PATTERN = /(?=[\s\S]*\bRoku \| Activate your device\b)(?=[\s\S]*\bactivate your device\b)(?=[\s\S]*my\.roku\.com(?:\/|%2F)link(?:\/|%2F)mail\b)/i;
+const ROKU_ACTIVATION_TWOFA_TEXT_PATTERN = /^(?=[\s\S]*\bRoku \| Activate your device\b)(?=[\s\S]*\bactivate your device\b)(?=[\s\S]*my\.roku\.com(?:\/|%2F)link(?:\/|%2F)mail\b)/i;
+const ROKU_SIGN_IN_TWOFA_TEXT_PATTERN = /^(?=[\s\S]*\bRoku \| Signing in on [^\r\n?]{1,120}\?)(?=[\s\S]*\bAre you trying to sign in to your Roku account\?)(?=[\s\S]*\bEnter the following code to finish signing in:)(?=[\s\S]*\b\d{6}\b)/i;
 const SLACK_TWOFA_FROM_PATTERN = /^no-reply(?:-[a-z0-9]+)?@slack\.com$/i;
 const SLACK_TWOFA_TEXT_PATTERN = /(?=[\s\S]*\bSlack confirmation code:\s*[A-Z0-9-]+\b)(?=[\s\S]*\bConfirm your email address\b)/i;
 const CLAUDE_LOGIN_RECIPIENT = "claude@hyatusliving.com";
@@ -63,7 +64,10 @@ export function getTwofaEmailMatch(fromAddress: string, searchText: string, _rec
 	if (HYATUS_LIVING_TWOFA_FROM_PATTERN.test(fromAddress) && HYATUS_LIVING_TWOFA_TEXT_PATTERN.test(searchText)) {
 		return { source: "hyatus-living", channel: "agentic-inbox" };
 	}
-	if (ROKU_TWOFA_FROM_PATTERN.test(fromAddress) && ROKU_TWOFA_TEXT_PATTERN.test(searchText)) {
+	if (
+		ROKU_TWOFA_FROM_PATTERN.test(fromAddress)
+		&& (ROKU_ACTIVATION_TWOFA_TEXT_PATTERN.test(searchText) || ROKU_SIGN_IN_TWOFA_TEXT_PATTERN.test(searchText))
+	) {
 		return { source: "roku", channel: "agentic-inbox" };
 	}
 	if (SLACK_TWOFA_FROM_PATTERN.test(fromAddress) && SLACK_TWOFA_TEXT_PATTERN.test(searchText)) {

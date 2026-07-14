@@ -153,10 +153,10 @@
 				"folderId": "two-fa-dynamo"
 			},
 			{
-				"name": "roku-activate-device-two-fa",
+				"name": "roku-auth-two-fa",
 				"mailboxId": "ai@hyatusliving.com",
 				"fromPattern": "^(?:noreply@roku\\.com|accounts@hyatus\\.com)$",
-				"pattern": "(?=[\\s\\S]*\\bRoku \\| Activate your device\\b)(?=[\\s\\S]*\\bactivate your device\\b)(?=[\\s\\S]*my\\.roku\\.com(?:/|%2F)link(?:/|%2F)mail\\b)",
+				"pattern": "^(?:(?=[\\s\\S]*\\bRoku \\| Activate your device\\b)(?=[\\s\\S]*\\bactivate your device\\b)(?=[\\s\\S]*my\\.roku\\.com(?:/|%2F)link(?:/|%2F)mail\\b)|(?=[\\s\\S]*\\bRoku \\| Signing in on [^\\r\\n?]{1,120}\\?)(?=[\\s\\S]*\\bAre you trying to sign in to your Roku account\\?)(?=[\\s\\S]*\\bEnter the following code to finish signing in:)(?=[\\s\\S]*\\b\\d{6}\\b))",
 				"folderId": "two-fa-dynamo"
 			},
 			{
