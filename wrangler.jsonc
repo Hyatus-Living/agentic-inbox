@@ -109,6 +109,15 @@
 				"folderName": "Auto Process"
 			},
 			{
+				"name": "luxer-parcel",
+				"mailboxId": "ai@hyatusliving.com",
+				"fromPattern": "^support@luxerone\\.com$",
+				"pattern": "^(?:You've got a package\\.|Your package misses you|Don't forget to pick up your package\\.|Your package is still waiting|Please pick up your package|Your package is being returned to the sender)\\r?\\n",
+				"flags": "i",
+				"folderId": "parcel",
+				"folderName": "Parcel"
+			},
+			{
 				"name": "keycafe",
 				"mailboxId": "ai@hyatusliving.com",
 				"recipientPattern": "^ai@hyatusliving\\.com$",
