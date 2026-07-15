@@ -40,6 +40,7 @@ import {
 } from "./review-removal-routing";
 import { getClaudeLoginSmsMatch, getTwofaEmailMatch } from "./twofa-routing";
 import { getButterflyEmailTags } from "./butterfly-routing";
+import { getRecipientEmailTags } from "./recipient-tagging";
 import type { EmailFull } from "./lib/schemas";
 
 type AppContext = Context<MailboxContext>;
@@ -460,6 +461,11 @@ app.get("/api/v1/mailboxes/:mailboxId/folders", async (c: AppContext) => {
 
 app.get("/api/v1/mailboxes/:mailboxId/tags", async (c: AppContext) => {
 	return c.json(await (c.var.mailboxStub as any).getTags());
+});
+
+app.post("/api/v1/mailboxes/:mailboxId/recipient-tags/backfill", async (c: AppContext) => {
+	const mailboxId = c.req.param("mailboxId")!.toLowerCase();
+	return c.json(await (c.var.mailboxStub as any).backfillRecipientTags(mailboxId));
 });
 
 app.post("/api/v1/mailboxes/:mailboxId/folders", async (c: AppContext) => {
@@ -1040,11 +1046,14 @@ async function receiveEmail(
 	const forwardingSearchText = emailSearchText(parsedEmail);
 	const fromAddress = (parsedEmail.from?.address || "").toLowerCase();
 	const twofaEmailMatch = getTwofaEmailMatch(fromAddress, forwardingSearchText, allRecipients);
-	const tags = getButterflyEmailTags(
-		fromAddress,
-		allRecipients,
-		twofaEmailMatch?.source === "butterflymx",
-	);
+	const tags = [...new Set([
+		...getRecipientEmailTags(mailboxId, allRecipients),
+		...getButterflyEmailTags(
+			fromAddress,
+			allRecipients,
+			twofaEmailMatch?.source === "butterflymx",
+		),
+	])];
 	if (requireTwofa && !twofaEmailMatch) {
 		return { matched: false, stored: false, duplicate: false };
 	}

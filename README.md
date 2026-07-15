@@ -232,10 +232,19 @@ The CLI calls the production `/api/v1/mailboxes/:mailboxId/*` API with Cloudflar
 
 Messages can also carry multiple tags independently of their primary folder. Tags appear as badges on messages and as filterable links in the mailbox sidebar. ButterflyMX routing uses this model:
 
+- Mail routed into a mailbox through another Hyatus `To` address receives a readable recipient tag. Plus-address variants are grouped under the base address, such as `accounts+vendor@hyatus.com` under `Accounts` and `purchases+team@hyatus.com` under `Purchases`.
+- Direct mail to the canonical mailbox address is not redundantly tagged. Unit-style addresses remain reserved for service-specific rules, so ordinary ButterflyMX notifications do not receive a unit tag.
+
 - Every ButterflyMX email receives the `Butterfly` tag.
 - Activation emails with a direct `accounts.butterflymx.com/confirmations/...` link also receive the uppercase unit internal-name tag extracted from the `@hyatusliving.com` recipient.
 - Activation emails remain in the `2FA` folder and are posted through `TWOFA_POST_URL`.
 - Other ButterflyMX notifications remain in `Inbox` and are not posted to 2FA.
+
+To attach recipient tags to existing messages without changing their folders or triggering 2FA delivery, call:
+
+```bash
+curl -X POST "https://codex-inbox.hyatusliving.com/api/v1/mailboxes/ai%40hyatusliving.com/recipient-tags/backfill"
+```
 
 ### Deploy
 

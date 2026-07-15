@@ -10,6 +10,7 @@ import * as schema from "../db/schema";
 import { Folders } from "../../shared/folders";
 import type { Env } from "../types";
 import type { ContentLabelRule } from "../lib/config";
+import { getRecipientEmailTags } from "../recipient-tagging";
 import { applyMigrations, mailboxMigrations } from "./migrations";
 
 /**
@@ -130,6 +131,12 @@ function tagId(name: string) {
 		.replace(/^-|-$/g, "");
 }
 
+function normalizedTags(names: string[]) {
+	return [...new Set(names.map((name) => name.trim()).filter(Boolean))]
+		.map((name) => ({ id: tagId(name), name }))
+		.filter((tag) => tag.id);
+}
+
 export class MailboxDO extends DurableObject<Env> {
 	declare __DURABLE_OBJECT_BRAND: never;
 	db: ReturnType<typeof drizzle>;
@@ -158,6 +165,30 @@ export class MailboxDO extends DurableObject<Env> {
 			tagsByEmail.set(row.email_id, tags);
 		}
 		return rows.map((row) => ({ ...row, tags: tagsByEmail.get(row.id) ?? [] }));
+	}
+
+	#insertTags(emailId: string, names: string[]) {
+		let added = 0;
+		for (const tag of normalizedTags(names)) {
+			this.ctx.storage.sql.exec(
+				"INSERT OR IGNORE INTO tags (id, name) VALUES (?1, ?2)",
+				tag.id,
+				tag.name,
+			);
+			const existing = [...this.ctx.storage.sql.exec(
+				"SELECT 1 AS found FROM email_tags WHERE email_id = ?1 AND tag_id = ?2 LIMIT 1",
+				emailId,
+				tag.id,
+			)][0];
+			if (existing) continue;
+			this.ctx.storage.sql.exec(
+				"INSERT INTO email_tags (email_id, tag_id) VALUES (?1, ?2)",
+				emailId,
+				tag.id,
+			);
+			added++;
+		}
+		return added;
 	}
 
 	// ── Email CRUD (Drizzle) ───────────────────────────────────────
@@ -673,6 +704,27 @@ export class MailboxDO extends DurableObject<Env> {
 		)];
 	}
 
+	async backfillRecipientTags(mailboxId: string) {
+		const rows = [...this.ctx.storage.sql.exec(
+			"SELECT id, recipient FROM emails ORDER BY date DESC",
+		)] as Array<{ id: string; recipient: string }>;
+		let taggedEmails = 0;
+		let tagLinksAdded = 0;
+		for (const row of rows) {
+			const recipients = (row.recipient || "")
+				.split(",")
+				.map((recipient) => recipient.trim())
+				.filter(Boolean);
+			const added = this.#insertTags(
+				row.id,
+				getRecipientEmailTags(mailboxId, recipients),
+			);
+			if (added > 0) taggedEmails++;
+			tagLinksAdded += added;
+		}
+		return { examined: rows.length, taggedEmails, tagLinksAdded };
+	}
+
 	async createFolder(id: string, name: string, is_deletable: number = 1) {
 		try {
 			const result = this.db
@@ -996,10 +1048,6 @@ export class MailboxDO extends DurableObject<Env> {
 
 		const folderId = folderRow.id;
 		const isSent = folderId === Folders.SENT;
-		const tags = [...new Set((email.tags ?? []).map((name) => name.trim()).filter(Boolean))]
-			.map((name) => ({ id: tagId(name), name }))
-			.filter((tag) => tag.id);
-
 		const normalizedMessageId = email.message_id?.trim().toLowerCase() || null;
 		return this.ctx.storage.transactionSync(() => {
 			if (normalizedMessageId) {
@@ -1042,18 +1090,7 @@ export class MailboxDO extends DurableObject<Env> {
 				this.db.insert(schema.attachments).values(attachments).run();
 			}
 
-			for (const tag of tags) {
-				this.ctx.storage.sql.exec(
-					"INSERT OR IGNORE INTO tags (id, name) VALUES (?1, ?2)",
-					tag.id,
-					tag.name,
-				);
-				this.ctx.storage.sql.exec(
-					"INSERT OR IGNORE INTO email_tags (email_id, tag_id) VALUES (?1, ?2)",
-					email.id,
-					tag.id,
-				);
-			}
+			this.#insertTags(email.id, email.tags ?? []);
 
 			if (twofaDelivery) {
 				const now = new Date().toISOString();
