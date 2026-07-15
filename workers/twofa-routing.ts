@@ -31,6 +31,8 @@ const KEYCAFE_CONFIRM_TWOFA_FROM_PATTERN = /^noreply@keycafe\.com$/i;
 const KEYCAFE_CONFIRM_TWOFA_TEXT_PATTERN = /(?=[\s\S]*\bAction Required:\s*Please Confirm Your Email Address\b)(?=[\s\S]*https:\/\/(?:www\.)?keycafe\.com\/register\/verifyRegistration\?t=)/i;
 const IGLOOHOME_TWOFA_FROM_PATTERN = /^noreply@igloohome\.co$/i;
 const IGLOOHOME_TWOFA_TEXT_PATTERN = /(?=[\s\S]*\bYour One-Time Passcode from igloohome\b)(?=[\s\S]*\bPlease enter the One-Time Passcode \(OTP\) below\b)(?=[\s\S]*\b(?:\d{6}|\d{3}\s+\d{3})\b)/i;
+const GPT_GUEST_INVITE_TWOFA_FROM_PATTERN = /^no-reply@hyatus\.com$/i;
+const GPT_GUEST_INVITE_TWOFA_TEXT_PATTERN = /(?=[\s\S]*\bYou(?:'|’)ve been invited to join GPT Guest\b)(?=[\s\S]*\bhas invited you to join the GPT Guest platform\b)(?=[\s\S]*\bset your password and access your account\b)/i;
 const CLAUDE_LOGIN_RECIPIENT = "claude@hyatusliving.com";
 const CLAUDE_LOGIN_FROM_PATTERN = /^no-reply(?:-[a-z0-9-]+)?@(?:[a-z0-9-]+\.)*anthropic\.com$/i;
 const CLAUDE_LOGIN_TEXT_PATTERN = /(?=[\s\S]*\bSecure link to log in to Claude\.ai\b)(?=[\s\S]*\bSign in to Claude\.ai\b)(?=[\s\S]*\bclaude\.ai\/magic-link\b)/i;
@@ -92,6 +94,9 @@ export function getTwofaEmailMatch(fromAddress: string, searchText: string, _rec
 	}
 	if (IGLOOHOME_TWOFA_FROM_PATTERN.test(fromAddress) && IGLOOHOME_TWOFA_TEXT_PATTERN.test(searchText)) {
 		return { source: "igloohome", channel: "agentic-inbox" };
+	}
+	if (GPT_GUEST_INVITE_TWOFA_FROM_PATTERN.test(fromAddress) && GPT_GUEST_INVITE_TWOFA_TEXT_PATTERN.test(searchText)) {
+		return { source: "gpt-guest", channel: "agentic-inbox" };
 	}
 	if (
 		CLAUDE_LOGIN_FROM_PATTERN.test(fromAddress)
