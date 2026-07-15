@@ -39,7 +39,6 @@ import {
 	shouldUseOuterReviewRemovalCandidate,
 } from "./review-removal-routing";
 import { getClaudeLoginSmsMatch, getTwofaEmailMatch } from "./twofa-routing";
-import { buildParcelPendingPayload, isLuxerParcelEmail } from "./parcel-routing";
 
 type AppContext = Context<MailboxContext>;
 
@@ -603,29 +602,6 @@ async function postAutoprocessWebhook(env: Env, rawEmail: Uint8Array, context: {
 	if (!response.ok) throw new Error(`Autoprocess webhook failed with status ${response.status}`);
 }
 
-async function postParcelPendingEmail(env: Env, emailBody: string, context: {
-	sourceEmailId: string;
-	sourceAgenticEmailId: string;
-	sourceMailbox: string;
-	fromAddress: string;
-	fromName: string;
-	toAddress: string;
-	subject: string;
-	receivedAt: string;
-}) {
-	if (!env.PARCEL_PENDING_WEBHOOK_URL) throw new Error("PARCEL_PENDING_WEBHOOK_URL is required for parcel mail");
-	if (!env.SIMPLE_AI_API_KEY) throw new Error("SIMPLE_AI_API_KEY is required for parcel mail");
-	const response = await fetch(env.PARCEL_PENDING_WEBHOOK_URL, {
-		method: "POST",
-		headers: {
-			"Content-Type": "application/json",
-			"x-api-key": env.SIMPLE_AI_API_KEY,
-		},
-		body: JSON.stringify(buildParcelPendingPayload(emailBody, context)),
-	});
-	if (!response.ok) throw new Error(`Parcel Pending webhook failed with status ${response.status}`);
-}
-
 function appendStructuredExtractionHeader(rawHeaders: string, name: string, extraction: unknown) {
 	const headerName = "X-Hyatus-Structured-Extraction";
 	const headerValue = JSON.stringify(Array.isArray(extraction) ? { name, extractions: extraction } : { name, ...(extraction as Record<string, unknown>) });
@@ -994,7 +970,6 @@ async function receiveEmail(
 
 	const forwardingSearchText = emailSearchText(parsedEmail);
 	const fromAddress = (parsedEmail.from?.address || "").toLowerCase();
-	const luxerParcelEmail = isLuxerParcelEmail(fromAddress, forwardingSearchText);
 	ctx.waitUntil(forwardMatchingContentRules(message, env, mailboxId, forwardingSearchText));
 	const recipientSearchText = [...allRecipients, ...ccRecipients, ...bccRecipients].join("\n");
 	const labelRule = findContentLabelRule(env, mailboxId, fromAddress, recipientSearchText, forwardingSearchText);
@@ -1115,19 +1090,6 @@ async function receiveEmail(
 			source: twofaEmailMatch.source,
 			channel: twofaEmailMatch.channel,
 		}).catch((e) => console.error("2FA post failed:", (e as Error).message)));
-	}
-
-	if (luxerParcelEmail) {
-		ctx.waitUntil(postParcelPendingEmail(env, parsedEmail.text || parsedEmail.html || forwardingSearchText, {
-			sourceEmailId: originalMessageId || messageId,
-			sourceAgenticEmailId: messageId,
-			sourceMailbox: mailboxId,
-			fromAddress,
-			fromName: parsedEmail.from?.name || "Luxer One",
-			toAddress: mailboxResolution.recipientAddress,
-			subject: parsedEmail.subject || "",
-			receivedAt: new Date().toISOString(),
-		}).catch((e) => console.error("Parcel Pending webhook failed:", (e as Error).message)));
 	}
 
 	const claudeLoginSmsMatch = getClaudeLoginSmsMatch(fromAddress, allRecipients, forwardingSearchText);
