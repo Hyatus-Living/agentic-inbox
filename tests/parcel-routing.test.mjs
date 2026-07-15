@@ -1,23 +1,30 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { getContentLabelRules } from "../workers/lib/config.ts";
-import { buildParcelPendingPayload, isLuxerParcelEmail } from "../workers/parcel-routing.ts";
+import {
+	getContentLabelRules,
+	LUXER_PARCEL_SEARCH_PATTERN_SOURCE,
+	isLuxerParcelEmail,
+} from "../workers/lib/config.ts";
 
-const luxerPackageText = [
-	"You've got a package.",
-	"ENTER ACCESS CODE 438296",
-	"Go to the Luxer One package room in your building.",
-].join("\n");
-
-test("Luxer package notifications match the parcel route", () => {
-	assert.equal(isLuxerParcelEmail("support@luxerone.com", luxerPackageText), true);
+test("only recognized Luxer package subjects match the parcel route", () => {
+	for (const subject of [
+		"You've got a package.",
+		"Your package misses you",
+		"Don't forget to pick up your package.",
+		"Your Package is still waiting",
+		"Please pick up your package",
+		"Your package is being returned to the sender",
+	]) {
+		assert.equal(isLuxerParcelEmail("support@luxerone.com", subject), true);
+	}
 });
 
 test("Luxer marketing and lookalike senders do not match the parcel route", () => {
 	assert.equal(isLuxerParcelEmail("marketing@outreach.luxerone.com", "Download the Luxer One App Today!"), false);
-	assert.equal(isLuxerParcelEmail("attacker@example.com", luxerPackageText), false);
+	assert.equal(isLuxerParcelEmail("attacker@example.com", "You've got a package."), false);
 	assert.equal(isLuxerParcelEmail("support@luxerone.com", "Welcome to Luxer One"), false);
+	assert.equal(isLuxerParcelEmail("support@luxerone.com", "Unexpected package subject"), false);
 });
 
 test("Luxer parcel mail receives the static Parcel folder rule", () => {
@@ -26,31 +33,8 @@ test("Luxer parcel mail receives the static Parcel folder rule", () => {
 		name: "luxer-one-parcel",
 		mailboxId: "ai@hyatusliving.com",
 		fromPattern: "^support@luxerone\\.com$",
-		pattern: "(?=[\\s\\S]*\\bENTER ACCESS CODE\\b)(?=[\\s\\S]*\\bLuxer One package room\\b)",
+		pattern: LUXER_PARCEL_SEARCH_PATTERN_SOURCE,
 		folderId: "parcel",
 		folderName: "Parcel",
-	});
-});
-
-test("parcel webhook payload preserves the unit recipient and stable source id", () => {
-	assert.deepEqual(buildParcelPendingPayload("package body", {
-		sourceEmailId: "luxer-message-1",
-		sourceAgenticEmailId: "agentic-1",
-		sourceMailbox: "ai@hyatusliving.com",
-		fromAddress: "support@luxerone.com",
-		fromName: "Luxer One",
-		toAddress: "so2009mi@hyatusliving.com",
-		subject: "You've got a package.",
-		receivedAt: "2026-07-14T18:09:00.000Z",
-	}), {
-		source_email_id: "luxer-message-1",
-		source_agentic_email_id: "agentic-1",
-		source_mailbox: "ai@hyatusliving.com",
-		from_address: "support@luxerone.com",
-		from_name: "Luxer One",
-		to_address: "so2009mi@hyatusliving.com",
-		subject: "You've got a package.",
-		body: "package body",
-		received_at: "2026-07-14T18:09:00.000Z",
 	});
 });

@@ -94,7 +94,6 @@
 		],
 		"OPENAI_MODEL": "gpt-4.1-mini",
 		"SIMPLE_AI_STRUCTURED_URL": "https://fast.gptpricing.com/simple-ai/structured",
-		"PARCEL_PENDING_WEBHOOK_URL": "https://fast.gptpricing.com/parcel-pending/email",
 		"REVIEW_REMOVAL_URL": "https://gn6slmok95.execute-api.us-east-1.amazonaws.com/dev/admin-api/review-removal",
 		"AIRBNB_REVIEW_REMOVAL_URL": "https://gn6slmok95.execute-api.us-east-1.amazonaws.com/dev/admin-api/airbnb-review-removal",
 		"TWOFA_POST_URL": "https://kjc0ypdntl.execute-api.us-east-1.amazonaws.com/dev/api/twofa",

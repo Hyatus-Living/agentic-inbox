@@ -23,12 +23,25 @@ export type ContentLabelRule = {
 	folderName?: string;
 };
 
+export const LUXER_PARCEL_FROM_PATTERN_SOURCE = "^support@luxerone\\.com$";
+export const LUXER_PARCEL_SUBJECT_PATTERN_SOURCE =
+	"^(?:You've got a package\\.|Your package misses you|Don't forget to pick up your package\\.|Your Package is still waiting|Please pick up your package|Your package is being returned to the sender)$";
+export const LUXER_PARCEL_SEARCH_PATTERN_SOURCE =
+	LUXER_PARCEL_SUBJECT_PATTERN_SOURCE.slice(0, -1) + "\\r?\\n";
+
+const luxerParcelFromPattern = new RegExp(LUXER_PARCEL_FROM_PATTERN_SOURCE, "i");
+const luxerParcelSubjectPattern = new RegExp(LUXER_PARCEL_SUBJECT_PATTERN_SOURCE, "i");
+
+export function isLuxerParcelEmail(fromAddress: string, subject: string) {
+	return luxerParcelFromPattern.test(fromAddress) && luxerParcelSubjectPattern.test(subject.trim());
+}
+
 const STATIC_CONTENT_LABEL_RULES: ContentLabelRule[] = [
 	{
 		name: "luxer-one-parcel",
 		mailboxId: AI_MAILBOX,
-		fromPattern: "^support@luxerone\\.com$",
-		pattern: "(?=[\\s\\S]*\\bENTER ACCESS CODE\\b)(?=[\\s\\S]*\\bLuxer One package room\\b)",
+		fromPattern: LUXER_PARCEL_FROM_PATTERN_SOURCE,
+		pattern: LUXER_PARCEL_SEARCH_PATTERN_SOURCE,
 		folderId: "parcel",
 		folderName: "Parcel",
 	},
