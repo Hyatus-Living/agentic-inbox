@@ -3,6 +3,63 @@ import { performance } from "node:perf_hooks";
 import test from "node:test";
 
 import { getClaudeLoginSmsMatch, getTwofaEmailMatch } from "../workers/twofa-routing.ts";
+import { getButterflyEmailTags } from "../workers/butterfly-routing.ts";
+
+test("ButterflyMX welcome links are 2FA candidates with Butterfly and unit tags", () => {
+	const searchText = [
+		"Welcome to Lore Luxury Apartments",
+		"Your property uses ButterflyMX to open and manage doors from your smartphone.",
+		"Get started",
+		"https://accounts.butterflymx.com/confirmations/QoIi28GTcPrqn71nB-Ap",
+	].join("\n");
+
+	assert.deepEqual(
+		getTwofaEmailMatch("registration@butterflymx.com", searchText, ["SA3201L@hyatusliving.com"]),
+		{ source: "butterflymx", channel: "agentic-inbox" },
+	);
+	assert.deepEqual(
+		getButterflyEmailTags("registration@butterflymx.com", ["SA3201L@hyatusliving.com"], true),
+		["Butterfly", "SA3201L"],
+	);
+});
+
+test("ButterflyMX account-confirmation links are 2FA candidates", () => {
+	const searchText = [
+		"Confirm your ButterflyMX account",
+		"Welcome to ButterflyMX",
+		"Get started",
+		"https://accounts.butterflymx.com/confirmations/R4PD0mBEuBlpbUqvXHP3",
+	].join("\n");
+
+	assert.deepEqual(
+		getTwofaEmailMatch("registration@butterflymx.com", searchText, ["sa5413l@hyatusliving.com"]),
+		{ source: "butterflymx", channel: "agentic-inbox" },
+	);
+});
+
+test("ordinary ButterflyMX notifications are tagged but do not post to 2FA", () => {
+	const searchText = [
+		"A visitor is at the door",
+		"Open the ButterflyMX app to view the visitor request.",
+	].join("\n");
+
+	assert.equal(getTwofaEmailMatch("notifications@butterflymx.com", searchText), null);
+	assert.deepEqual(
+		getButterflyEmailTags("notifications@butterflymx.com", ["SA3301L@hyatusliving.com"], false),
+		["Butterfly"],
+	);
+});
+
+test("Butterfly-looking activation text from another sender is not a 2FA candidate", () => {
+	const searchText = [
+		"Welcome to Lore Luxury Apartments",
+		"Get started",
+		"https://accounts.butterflymx.com/confirmations/example-token",
+	].join("\n");
+
+	assert.equal(getTwofaEmailMatch("attacker@example.com", searchText), null);
+	assert.deepEqual(getButterflyEmailTags("attacker@example.com", ["SA3201L@hyatusliving.com"], true), []);
+});
 
 test("Autohost login verification emails are 2FA candidates", () => {
 	const searchText = [

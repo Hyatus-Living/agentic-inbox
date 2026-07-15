@@ -12,6 +12,7 @@ import {
 	TrashIcon,
 } from "@phosphor-icons/react";
 import EmailAttachmentList from "~/components/EmailAttachmentList";
+import EmailTags from "~/components/EmailTags";
 import EmailIframe from "~/components/EmailIframe";
 import {
 	formatDetailDate,
@@ -121,6 +122,7 @@ export default function ThreadMessage({
 									{senderLabel}
 								</span>
 								{isDraft && <Badge variant="outline">Draft</Badge>}
+								<EmailTags tags={email.tags} />
 							</div>
 							<div className="text-xs text-kumo-subtle">To: {email.recipient}</div>
 						</div>

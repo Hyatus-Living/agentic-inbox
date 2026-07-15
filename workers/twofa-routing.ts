@@ -33,6 +33,8 @@ const IGLOOHOME_TWOFA_FROM_PATTERN = /^noreply@igloohome\.co$/i;
 const IGLOOHOME_TWOFA_TEXT_PATTERN = /(?=[\s\S]*\bYour One-Time Passcode from igloohome\b)(?=[\s\S]*\bPlease enter the One-Time Passcode \(OTP\) below\b)(?=[\s\S]*\b(?:\d{6}|\d{3}\s+\d{3})\b)/i;
 const GPT_GUEST_INVITE_TWOFA_FROM_PATTERN = /^no-reply@hyatus\.com$/i;
 const GPT_GUEST_INVITE_TWOFA_TEXT_PATTERN = /(?=[\s\S]*\bYou(?:'|’)ve been invited to join GPT Guest\b)(?=[\s\S]*\bhas invited you to join the GPT Guest platform\b)(?=[\s\S]*\bset your password and access your account\b)/i;
+const BUTTERFLY_ACTIVATION_FROM_PATTERN = /^registration@butterflymx\.com$/i;
+const BUTTERFLY_ACTIVATION_TEXT_PATTERN = /(?=[\s\S]*\b(?:Welcome to [^\r\n]{1,160}|Confirm your ButterflyMX account)\b)(?=[\s\S]*\bGet started\b)(?=[\s\S]*https:\/\/accounts\.butterflymx\.com\/confirmations\/[A-Za-z0-9_-]{8,})/i;
 const CLAUDE_LOGIN_RECIPIENT = "claude@hyatusliving.com";
 const CLAUDE_LOGIN_FROM_PATTERN = /^no-reply(?:-[a-z0-9-]+)?@(?:[a-z0-9-]+\.)*anthropic\.com$/i;
 const CLAUDE_LOGIN_TEXT_PATTERN = /(?=[\s\S]*\bSecure link to log in to Claude\.ai\b)(?=[\s\S]*\bSign in to Claude\.ai\b)(?=[\s\S]*\bclaude\.ai\/magic-link\b)/i;
@@ -97,6 +99,9 @@ export function getTwofaEmailMatch(fromAddress: string, searchText: string, _rec
 	}
 	if (GPT_GUEST_INVITE_TWOFA_FROM_PATTERN.test(fromAddress) && GPT_GUEST_INVITE_TWOFA_TEXT_PATTERN.test(searchText)) {
 		return { source: "gpt-guest", channel: "agentic-inbox" };
+	}
+	if (BUTTERFLY_ACTIVATION_FROM_PATTERN.test(fromAddress) && BUTTERFLY_ACTIVATION_TEXT_PATTERN.test(searchText)) {
+		return { source: "butterflymx", channel: "agentic-inbox" };
 	}
 	if (
 		CLAUDE_LOGIN_FROM_PATTERN.test(fromAddress)

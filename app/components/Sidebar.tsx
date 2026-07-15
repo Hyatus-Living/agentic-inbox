@@ -8,6 +8,7 @@ import {
 	CaretLeftIcon,
 	FolderIcon,
 	PlusIcon,
+	TagIcon,
 	TrashIcon,
 	TrayIcon,
 } from "@phosphor-icons/react";
@@ -16,6 +17,7 @@ import { useMemo, useState } from "react";
 import { NavLink, useNavigate, useParams } from "react-router";
 import { Folders, SYSTEM_FOLDER_IDS } from "shared/folders";
 import { useCreateFolder, useFolders } from "~/queries/folders";
+import { useTags } from "~/queries/tags";
 import { queryKeys } from "~/queries/keys";
 import { useMailbox } from "~/queries/mailboxes";
 import { useUIStore } from "~/hooks/useUIStore";
@@ -73,6 +75,7 @@ export default function Sidebar() {
 	const { mailboxId } = useParams<{ mailboxId: string }>();
 	const navigate = useNavigate();
 	const { data: folders = [] } = useFolders(mailboxId);
+	const { data: tags = [] } = useTags(mailboxId);
 	const createFolderMutation = useCreateFolder();
 	const { closeSidebar } = useUIStore();
 	const { data: currentMailbox } = useMailbox(mailboxId);
@@ -209,6 +212,26 @@ export default function Sidebar() {
 								/>
 							</Tooltip>
 						</div>
+					</div>
+				)}
+
+				{tags.length > 0 && (
+					<div className="pt-5">
+						<div className="px-3 mb-1.5">
+							<span className="text-xs uppercase tracking-wider font-semibold text-kumo-subtle">
+								Tags
+							</span>
+						</div>
+						{tags.map((tag) => (
+							<FolderLink
+								key={tag.id}
+								to={`/mailbox/${mailboxId}/tags/${tag.id}`}
+								icon={<TagIcon size={18} />}
+								label={tag.name}
+								unreadCount={tag.unreadCount}
+								onClick={handleNavClick}
+							/>
+						))}
 					</div>
 				)}
 			</nav>

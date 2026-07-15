@@ -178,7 +178,7 @@ Each rule applies only to its `mailboxId`. `forwardTo` must be a verified Cloudf
 
 ### Content label rules
 
-Agentic Inbox stores mail in folders rather than separate Gmail-style labels. Inbound messages can be placed into a folder when their recipient, subject, text body, or HTML body matches a JavaScript regular expression. Configure rules in `wrangler.jsonc` under `CONTENT_LABEL_RULES`:
+Agentic Inbox stores each message in one primary folder. Inbound messages can be placed into a folder when their recipient, subject, text body, or HTML body matches a JavaScript regular expression. Configure rules in `wrangler.jsonc` under `CONTENT_LABEL_RULES`:
 
 ```jsonc
 "CONTENT_LABEL_RULES": [
@@ -219,6 +219,15 @@ npm run inbox:backfill-labels
 ```
 
 The CLI calls the production `/api/v1/mailboxes/:mailboxId/*` API with Cloudflare Access service-token headers and handles API pagination. Read/list/search work with a granted `service_agent` token. Arbitrary email moves still require super-admin authorization; use deployed `CONTENT_LABEL_RULES` plus `inbox:backfill-labels` for safe bulk relabeling.
+
+### Message tags
+
+Messages can also carry multiple tags independently of their primary folder. Tags appear as badges on messages and as filterable links in the mailbox sidebar. ButterflyMX routing uses this model:
+
+- Every ButterflyMX email receives the `Butterfly` tag.
+- Activation emails with a direct `accounts.butterflymx.com/confirmations/...` link also receive the uppercase unit internal-name tag extracted from the `@hyatusliving.com` recipient.
+- Activation emails remain in the `2FA` folder and are posted through `TWOFA_POST_URL`.
+- Other ButterflyMX notifications remain in `Inbox` and are not posted to 2FA.
 
 ### Deploy
 

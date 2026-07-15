@@ -53,6 +53,7 @@ const SORT_COLUMN_MAP = {
 interface SearchFilterOptions {
 	query: string;
 	folder?: string;
+	tag?: string;
 	from?: string;
 	to?: string;
 	subject?: string;
@@ -65,6 +66,7 @@ interface SearchFilterOptions {
 
 interface GetEmailsOptions {
 	folder?: string;
+	tag?: string;
 	thread_id?: string;
 	page?: number;
 	limit?: number;
@@ -88,6 +90,7 @@ interface EmailData {
 	thread_id?: string | null;
 	message_id?: string | null;
 	raw_headers?: string | null;
+	tags?: string[];
 }
 
 interface AttachmentData {
@@ -114,6 +117,19 @@ interface TwofaDeliveryRow {
 	next_attempt_at: number;
 }
 
+interface EmailTag {
+	id: string;
+	name: string;
+}
+
+function tagId(name: string) {
+	return name.trim().toLowerCase()
+		.replace(/\s+/g, "-")
+		.replace(/[^a-z0-9-]/g, "")
+		.replace(/-+/g, "-")
+		.replace(/^-|-$/g, "");
+}
+
 export class MailboxDO extends DurableObject<Env> {
 	declare __DURABLE_OBJECT_BRAND: never;
 	db: ReturnType<typeof drizzle>;
@@ -124,11 +140,32 @@ export class MailboxDO extends DurableObject<Env> {
 		applyMigrations(this.ctx.storage.sql, mailboxMigrations, this.ctx.storage);
 	}
 
+	#attachTags<T extends { id: string }>(rows: T[]): Array<T & { tags: EmailTag[] }> {
+		if (rows.length === 0) return [];
+		const placeholders = rows.map((_, index) => `?${index + 1}`).join(",");
+		const tagRows = [...this.ctx.storage.sql.exec(
+			`SELECT et.email_id, t.id, t.name
+			 FROM email_tags et
+			 JOIN tags t ON t.id = et.tag_id
+			 WHERE et.email_id IN (${placeholders})
+			 ORDER BY t.name`,
+			...rows.map((row) => row.id),
+		)] as Array<{ email_id: string; id: string; name: string }>;
+		const tagsByEmail = new Map<string, EmailTag[]>();
+		for (const row of tagRows) {
+			const tags = tagsByEmail.get(row.email_id) ?? [];
+			tags.push({ id: row.id, name: row.name });
+			tagsByEmail.set(row.email_id, tags);
+		}
+		return rows.map((row) => ({ ...row, tags: tagsByEmail.get(row.id) ?? [] }));
+	}
+
 	// ── Email CRUD (Drizzle) ───────────────────────────────────────
 
 	async getEmails(options: GetEmailsOptions = {}) {
 		const {
 			folder,
+			tag,
 			thread_id,
 			page = 1,
 			limit: rawLimit = 25,
@@ -152,6 +189,13 @@ export class MailboxDO extends DurableObject<Env> {
 			conditions.push(
 				sql`${schema.emails.folder_id} = (SELECT id FROM folders WHERE name = ${folder} OR id = ${folder} LIMIT 1)`,
 			);
+		}
+		if (tag) {
+			conditions.push(sql`EXISTS (
+				SELECT 1 FROM email_tags
+				WHERE email_tags.email_id = ${schema.emails.id}
+				AND email_tags.tag_id = ${tag}
+			)`);
 		}
 		if (thread_id) {
 			conditions.push(eq(schema.emails.thread_id, thread_id));
@@ -184,18 +228,18 @@ export class MailboxDO extends DurableObject<Env> {
 			.offset(offset)
 			.all();
 
-		return result.map((email) => ({
+		return this.#attachTags(result.map((email) => ({
 			...email,
 			read: !!email.read,
 			starred: !!email.starred,
-		}));
+		})));
 	}
 
 	/**
 	 * Count total emails matching the given filters (for pagination).
 	 */
-	async countEmails(options: { folder?: string; thread_id?: string } = {}) {
-		const { folder, thread_id } = options;
+	async countEmails(options: { folder?: string; tag?: string; thread_id?: string } = {}) {
+		const { folder, tag, thread_id } = options;
 		const conditions: string[] = [];
 		const params: (string | number)[] = [];
 
@@ -204,6 +248,11 @@ export class MailboxDO extends DurableObject<Env> {
 				"folder_id = (SELECT id FROM folders WHERE name = ?1 OR id = ?1 LIMIT 1)",
 			);
 			params.push(folder);
+		}
+
+		if (tag) {
+			conditions.push(`id IN (SELECT email_id FROM email_tags WHERE tag_id = ?${params.length + 1})`);
+			params.push(tag);
 		}
 
 		if (thread_id) {
@@ -293,14 +342,14 @@ export class MailboxDO extends DurableObject<Env> {
 			);
 
 			const rows = [...result];
-			return rows.map((row: any) => ({
+			return this.#attachTags(rows.map((row: any) => ({
 				...row,
 				read: !!row.read,
 				starred: !!row.starred,
 				thread_count: row.thread_count || 1,
 				thread_unread_count: row.thread_unread_count || 0,
 				participants: row.participants || row.sender,
-			}));
+			})));
 		}
 
 		// Non-draft folders: full threading logic
@@ -388,7 +437,7 @@ export class MailboxDO extends DurableObject<Env> {
 		);
 
 		const rows = [...result];
-		return rows.map((row: any) => ({
+		return this.#attachTags(rows.map((row: any) => ({
 			...row,
 			read: !!row.read,
 			starred: !!row.starred,
@@ -397,7 +446,7 @@ export class MailboxDO extends DurableObject<Env> {
 			participants: row.participants || row.sender,
 			needs_reply: !!row.needs_reply,
 			has_draft: !!row.has_draft,
-		}));
+		})));
 	}
 
 	/**
@@ -466,12 +515,12 @@ export class MailboxDO extends DurableObject<Env> {
 			.where(eq(schema.attachments.email_id, id))
 			.all();
 
-		return {
+		return this.#attachTags([{
 			...email,
 			read: !!email.read,
 			starred: !!email.starred,
 			attachments: emailAttachments,
-		};
+		}])[0];
 	}
 
 	/**
@@ -508,12 +557,12 @@ export class MailboxDO extends DurableObject<Env> {
 			attachmentsByEmail.set(att.email_id, list);
 		}
 
-		return emailRows.map((email) => ({
+		return this.#attachTags(emailRows.map((email) => ({
 			...email,
 			read: !!email.read,
 			starred: !!email.starred,
 			attachments: attachmentsByEmail.get(email.id) || [],
-		}));
+		})));
 	}
 
 	async updateEmail(
@@ -607,6 +656,21 @@ export class MailboxDO extends DurableObject<Env> {
 			.groupBy(schema.folders.id, schema.folders.name)
 			.all();
 		return result;
+	}
+
+	async getTags() {
+		return [...this.ctx.storage.sql.exec(
+			`SELECT
+				t.id,
+				t.name,
+				COUNT(et.email_id) AS emailCount,
+				COALESCE(SUM(CASE WHEN e.read = 0 THEN 1 ELSE 0 END), 0) AS unreadCount
+			 FROM tags t
+			 LEFT JOIN email_tags et ON et.tag_id = t.id
+			 LEFT JOIN emails e ON e.id = et.email_id
+			 GROUP BY t.id, t.name
+			 ORDER BY t.name`,
+		)];
 	}
 
 	async createFolder(id: string, name: string, is_deletable: number = 1) {
@@ -736,7 +800,7 @@ export class MailboxDO extends DurableObject<Env> {
 		options: SearchFilterOptions,
 		tableAlias = "",
 	): { conditions: string[]; params: (string | number)[] } {
-		const { query, folder, from, to, subject, date_start, date_end, is_read, is_starred, has_attachment } = options;
+		const { query, folder, tag, from, to, subject, date_start, date_end, is_read, is_starred, has_attachment } = options;
 		const prefix = tableAlias ? `${tableAlias}.` : "";
 		const conditions: string[] = [];
 		const params: (string | number)[] = [];
@@ -758,6 +822,10 @@ export class MailboxDO extends DurableObject<Env> {
 		if (folder) {
 			const p = addParam(folder);
 			conditions.push(`${prefix}folder_id = (SELECT id FROM folders WHERE name = ${p} OR id = ${p} LIMIT 1)`);
+		}
+		if (tag) {
+			const p = addParam(tag);
+			conditions.push(`${prefix}id IN (SELECT email_id FROM email_tags WHERE tag_id = ${p})`);
 		}
 		if (from) { const p = addParam(`%${from}%`); conditions.push(`${prefix}sender LIKE ${p}`); }
 		if (to) { const p = addParam(`%${to}%`); conditions.push(`(${prefix}recipient LIKE ${p} OR ${prefix}cc LIKE ${p} OR ${prefix}bcc LIKE ${p})`); }
@@ -792,11 +860,11 @@ export class MailboxDO extends DurableObject<Env> {
 		params.push(limit, offset);
 
 		const result = this.ctx.storage.sql.exec(query, ...params);
-		return [...result].map((row: any) => ({
+		return this.#attachTags([...result].map((row: any) => ({
 			...row,
 			read: !!row.read,
 			starred: !!row.starred,
-		}));
+		})));
 	}
 
 	/**
@@ -928,6 +996,9 @@ export class MailboxDO extends DurableObject<Env> {
 
 		const folderId = folderRow.id;
 		const isSent = folderId === Folders.SENT;
+		const tags = [...new Set((email.tags ?? []).map((name) => name.trim()).filter(Boolean))]
+			.map((name) => ({ id: tagId(name), name }))
+			.filter((tag) => tag.id);
 
 		const normalizedMessageId = email.message_id?.trim().toLowerCase() || null;
 		return this.ctx.storage.transactionSync(() => {
@@ -969,6 +1040,19 @@ export class MailboxDO extends DurableObject<Env> {
 
 			if (attachments.length > 0) {
 				this.db.insert(schema.attachments).values(attachments).run();
+			}
+
+			for (const tag of tags) {
+				this.ctx.storage.sql.exec(
+					"INSERT OR IGNORE INTO tags (id, name) VALUES (?1, ?2)",
+					tag.id,
+					tag.name,
+				);
+				this.ctx.storage.sql.exec(
+					"INSERT OR IGNORE INTO email_tags (email_id, tag_id) VALUES (?1, ?2)",
+					email.id,
+					tag.id,
+				);
 			}
 
 			if (twofaDelivery) {

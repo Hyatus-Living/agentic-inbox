@@ -48,6 +48,14 @@ export interface Email {
 	participants?: string;
 	needs_reply?: boolean;
 	has_draft?: boolean;
+	tags?: Tag[];
+}
+
+export interface Tag {
+	id: string;
+	name: string;
+	emailCount?: number;
+	unreadCount?: number;
 }
 
 export interface Attachment {

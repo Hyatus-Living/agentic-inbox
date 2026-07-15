@@ -39,6 +39,7 @@ import {
 	shouldUseOuterReviewRemovalCandidate,
 } from "./review-removal-routing";
 import { getClaudeLoginSmsMatch, getTwofaEmailMatch } from "./twofa-routing";
+import { getButterflyEmailTags } from "./butterfly-routing";
 
 type AppContext = Context<MailboxContext>;
 
@@ -293,6 +294,7 @@ app.delete("/api/v1/mailboxes/:mailboxId", async (c) => {
 
 app.get("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 	const folder = c.req.query("folder");
+	const tag = c.req.query("tag");
 	const thread_id = c.req.query("thread_id");
 	const threaded = boolQuery(c, "threaded");
 	const page = intQuery(c, "page");
@@ -306,9 +308,9 @@ app.get("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 		const totalCount = await (stub as any).countThreadedEmails(folder);
 		return c.json({ emails, totalCount });
 	}
-	const emails = await stub.getEmails({ folder, thread_id, page, limit, sortColumn, sortDirection });
-	if (folder) {
-		const totalCount = await stub.countEmails({ folder, thread_id });
+	const emails = await stub.getEmails({ folder, tag, thread_id, page, limit, sortColumn, sortDirection });
+	if (folder || tag) {
+		const totalCount = await stub.countEmails({ folder, tag, thread_id });
 		return c.json({ emails, totalCount });
 	}
 	return c.json(emails);
@@ -399,6 +401,10 @@ app.get("/api/v1/mailboxes/:mailboxId/folders", async (c: AppContext) => {
 	return c.json(await c.var.mailboxStub.getFolders());
 });
 
+app.get("/api/v1/mailboxes/:mailboxId/tags", async (c: AppContext) => {
+	return c.json(await (c.var.mailboxStub as any).getTags());
+});
+
 app.post("/api/v1/mailboxes/:mailboxId/folders", async (c: AppContext) => {
 	const denied = await requireSuperAdmin(c);
 	if (denied) return denied;
@@ -428,7 +434,7 @@ app.delete("/api/v1/mailboxes/:mailboxId/folders/:id", async (c: AppContext) => 
 
 app.get("/api/v1/mailboxes/:mailboxId/search", async (c: AppContext) => {
 	const searchOpts: Record<string, unknown> = {
-		query: c.req.query("query") || "", folder: c.req.query("folder"), from: c.req.query("from"),
+		query: c.req.query("query") || "", folder: c.req.query("folder"), tag: c.req.query("tag"), from: c.req.query("from"),
 		to: c.req.query("to"), subject: c.req.query("subject"), date_start: c.req.query("date_start"),
 		date_end: c.req.query("date_end"), is_read: boolQuery(c, "is_read"),
 		is_starred: boolQuery(c, "is_starred"), has_attachment: boolQuery(c, "has_attachment"),
@@ -976,6 +982,11 @@ async function receiveEmail(
 	const forwardingSearchText = emailSearchText(parsedEmail);
 	const fromAddress = (parsedEmail.from?.address || "").toLowerCase();
 	const twofaEmailMatch = getTwofaEmailMatch(fromAddress, forwardingSearchText, allRecipients);
+	const tags = getButterflyEmailTags(
+		fromAddress,
+		allRecipients,
+		twofaEmailMatch?.source === "butterflymx",
+	);
 	if (requireTwofa && !twofaEmailMatch) {
 		return { matched: false, stored: false, duplicate: false };
 	}
@@ -1066,6 +1077,7 @@ async function receiveEmail(
 		body: parsedEmail.html || parsedEmail.text || "",
 		in_reply_to: inReplyTo, email_references: emailReferences.length > 0 ? JSON.stringify(emailReferences) : null,
 		thread_id: threadId, message_id: originalMessageId, raw_headers: rawHeaders,
+		tags,
 	}, attachmentData, twofaDelivery);
 	if (!createResult.created) {
 		if (attachmentKeys.length) await env.BUCKET.delete(attachmentKeys);
@@ -1163,6 +1175,7 @@ async function receiveEmail(
 		emailId: messageId,
 		messageId: originalMessageId,
 		folderId: destinationFolder,
+		tags,
 		twofaDeliveryStatus,
 	};
 }
