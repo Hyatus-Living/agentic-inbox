@@ -25,8 +25,16 @@ export { AuthzDO } from "./lib/authz";
 
 export class EmailIngress extends WorkerEntrypoint<Env> {
 	async ingestEmail(message: { from: string; to: string; raw: ArrayBuffer }) {
+		return this.#ingest(message, false);
+	}
+
+	async ingestAuthenticationEmail(message: { from: string; to: string; raw: ArrayBuffer }) {
+		return this.#ingest(message, true);
+	}
+
+	async #ingest(message: { from: string; to: string; raw: ArrayBuffer }, requireTwofa: boolean) {
 		const raw = message.raw;
-		await receiveEmail({
+		return receiveEmail({
 			from: message.from,
 			to: message.to,
 			headers: new Headers(),
@@ -41,7 +49,7 @@ export class EmailIngress extends WorkerEntrypoint<Env> {
 			async reply() {
 				throw new Error("Internally routed email cannot be replied to during ingestion");
 			},
-		}, this.env, this.ctx, AI_MAILBOX);
+		}, this.env, this.ctx, AI_MAILBOX, requireTwofa);
 	}
 }
 

@@ -142,6 +142,83 @@ test("package-room access codes are not treated as 2FA", () => {
 	assert.equal(getTwofaEmailMatch("support@luxerone.com", searchText), null);
 });
 
+test("Disney+ one-time passcodes forwarded by Accounts are 2FA candidates", () => {
+	const searchText = [
+		"Your one-time passcode for Disney+",
+		"Use this one-time passcode to finish signing in.",
+		"123456",
+	].join("\n");
+
+	assert.deepEqual(
+		getTwofaEmailMatch("accounts@hyatus.com", searchText, ["ai@hyatusliving.com"]),
+		{ source: "disney", channel: "agentic-inbox" },
+	);
+});
+
+test("Disney login alerts without a passcode are not 2FA candidates", () => {
+	assert.equal(
+		getTwofaEmailMatch("accounts@hyatus.com", "We noticed a new login to Disney+"),
+		null,
+	);
+});
+
+test("Stripe Link verification links are 2FA candidates", () => {
+	const searchText = [
+		"Verify your email",
+		"Confirm it’s you",
+		"To confirm it’s you, please verify your email address.",
+		"https://app.link.com/verify/example",
+	].join("\n");
+
+	assert.deepEqual(
+		getTwofaEmailMatch("notifications@link.com", searchText),
+		{ source: "stripe-link", channel: "agentic-inbox" },
+	);
+});
+
+test("Keycafe account-confirmation links override the ordinary Keycafe route", () => {
+	const searchText = [
+		"Action Required: Please Confirm Your Email Address",
+		"Confirm your email address to finish creating your account.",
+		"https://www.keycafe.com/register/verifyRegistration?t=example-token",
+	].join("\n");
+
+	assert.deepEqual(
+		getTwofaEmailMatch("noreply@keycafe.com", searchText),
+		{ source: "keycafe", channel: "agentic-inbox" },
+	);
+});
+
+test("igloohome spaced one-time passcodes are 2FA candidates", () => {
+	const searchText = [
+		"Your One-Time Passcode from igloohome",
+		"Please enter the One-Time Passcode (OTP) below on igloohome App",
+		"137 143",
+		"It will be valid for 5 minutes",
+	].join("\n");
+
+	assert.deepEqual(
+		getTwofaEmailMatch("noreply@igloohome.co", searchText, ["igloohome@hyatusliving.com"]),
+		{ source: "igloohome", channel: "agentic-inbox" },
+	);
+});
+
+test("Claude magic links are both two-fa and SMS candidates", () => {
+	const searchText = [
+		"Secure link to log in to Claude.ai",
+		"Sign in to Claude.ai",
+		"https://claude.ai/magic-link#example",
+	].join("\n");
+	const sender = "no-reply-example@mail.anthropic.com";
+	const recipients = ["claude@hyatusliving.com"];
+
+	assert.deepEqual(
+		getTwofaEmailMatch(sender, searchText, recipients),
+		{ source: "claude", channel: "agentic-inbox" },
+	);
+	assert.equal(getClaudeLoginSmsMatch(sender, recipients, searchText)?.service, "Claude");
+});
+
 test("OpenAI login code emails still match the existing 2FA route", () => {
 	const searchText = [
 		"Your temporary ChatGPT login code",

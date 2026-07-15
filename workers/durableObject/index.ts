@@ -100,6 +100,20 @@ interface AttachmentData {
 	disposition?: string | null;
 }
 
+interface TwofaDeliveryData {
+	message_id: string;
+	payload: string;
+}
+
+interface TwofaDeliveryRow {
+	email_id: string;
+	message_id: string;
+	payload: string;
+	status: string;
+	attempts: number;
+	next_attempt_at: number;
+}
+
 export class MailboxDO extends DurableObject<Env> {
 	declare __DURABLE_OBJECT_BRAND: never;
 	db: ReturnType<typeof drizzle>;
@@ -881,10 +895,21 @@ export class MailboxDO extends DurableObject<Env> {
 
 	// ── Email creation (Drizzle) ───────────────────────────────────
 
+	async getEmailByMessageId(messageId: string) {
+		const normalized = messageId.trim().toLowerCase();
+		if (!normalized) return null;
+		const row = [...this.ctx.storage.sql.exec(
+			"SELECT email_id FROM email_message_dedup WHERE message_id = ?1 LIMIT 1",
+			normalized,
+		)][0] as { email_id: string } | undefined;
+		return row?.email_id ?? null;
+	}
+
 	async createEmail(
 		folder: string,
 		email: EmailData,
 		attachments: AttachmentData[],
+		twofaDelivery?: TwofaDeliveryData,
 	) {
 		// Resolve folder name or ID to the actual folder ID.
 		const folderRow = this.db
@@ -904,32 +929,153 @@ export class MailboxDO extends DurableObject<Env> {
 		const folderId = folderRow.id;
 		const isSent = folderId === Folders.SENT;
 
-		// Sent emails are always read — the sender obviously knows what they wrote.
-		// This prevents sent replies from inflating thread_unread_count.
-		this.db
-			.insert(schema.emails)
-			.values({
-				id: email.id,
-				folder_id: folderId,
-				subject: email.subject,
-				sender: email.sender,
-				recipient: email.recipient,
-				cc: email.cc ?? null,
-				bcc: email.bcc ?? null,
-				date: email.date,
-				read: isSent ? 1 : (email.read ? 1 : 0),
-				starred: email.starred ? 1 : 0,
-				body: email.body,
-				in_reply_to: email.in_reply_to ?? null,
-				email_references: email.email_references ?? null,
-				thread_id: email.thread_id ?? null,
-				message_id: email.message_id ?? null,
-				raw_headers: email.raw_headers ?? null,
-			})
-			.run();
+		const normalizedMessageId = email.message_id?.trim().toLowerCase() || null;
+		return this.ctx.storage.transactionSync(() => {
+			if (normalizedMessageId) {
+				const existing = [...this.ctx.storage.sql.exec(
+					"SELECT email_id FROM email_message_dedup WHERE message_id = ?1 LIMIT 1",
+					normalizedMessageId,
+				)][0] as { email_id: string } | undefined;
+				if (existing) return { created: false, emailId: existing.email_id };
+				this.ctx.storage.sql.exec(
+					"INSERT INTO email_message_dedup (message_id, email_id) VALUES (?1, ?2)",
+					normalizedMessageId,
+					email.id,
+				);
+			}
 
-		if (attachments.length > 0) {
-			this.db.insert(schema.attachments).values(attachments).run();
+			// Sent emails are always read — the sender obviously knows what they wrote.
+			this.db
+				.insert(schema.emails)
+				.values({
+					id: email.id,
+					folder_id: folderId,
+					subject: email.subject,
+					sender: email.sender,
+					recipient: email.recipient,
+					cc: email.cc ?? null,
+					bcc: email.bcc ?? null,
+					date: email.date,
+					read: isSent ? 1 : (email.read ? 1 : 0),
+					starred: email.starred ? 1 : 0,
+					body: email.body,
+					in_reply_to: email.in_reply_to ?? null,
+					email_references: email.email_references ?? null,
+					thread_id: email.thread_id ?? null,
+					message_id: normalizedMessageId,
+					raw_headers: email.raw_headers ?? null,
+				})
+				.run();
+
+			if (attachments.length > 0) {
+				this.db.insert(schema.attachments).values(attachments).run();
+			}
+
+			if (twofaDelivery) {
+				const now = new Date().toISOString();
+				this.ctx.storage.sql.exec(
+					`INSERT INTO twofa_deliveries (
+						email_id, message_id, payload, status, attempts,
+						next_attempt_at, created_at, updated_at
+					) VALUES (?1, ?2, ?3, 'pending', 0, ?4, ?5, ?5)`,
+					email.id,
+					twofaDelivery.message_id,
+					twofaDelivery.payload,
+					Date.now(),
+					now,
+				);
+			}
+
+			return { created: true, emailId: email.id };
+		});
+	}
+
+	async deliverTwofa(emailId: string) {
+		const row = [...this.ctx.storage.sql.exec(
+			`SELECT email_id, message_id, payload, status, attempts, next_attempt_at
+			 FROM twofa_deliveries WHERE email_id = ?1 LIMIT 1`,
+			emailId,
+		)][0] as unknown as TwofaDeliveryRow | undefined;
+		if (!row) return { status: "not_queued" };
+		if (row.status === "delivered") return { status: "delivered" };
+		if (row.next_attempt_at > Date.now()) return { status: "pending" };
+
+		const webhookUrl = (this.env as Env & { TWOFA_POST_URL?: string }).TWOFA_POST_URL;
+		const apiKey = this.env.TWOFA_API_KEY;
+		if (!webhookUrl || !apiKey) {
+			await this.#recordTwofaFailure(row, "2FA webhook configuration is missing");
+			return { status: "pending" };
 		}
+
+		const processingDeadline = Date.now() + 5 * 60 * 1000;
+		this.ctx.storage.sql.exec(
+			`UPDATE twofa_deliveries
+			 SET status = 'processing', next_attempt_at = ?1, updated_at = ?2
+			 WHERE email_id = ?3`,
+			processingDeadline,
+			new Date().toISOString(),
+			emailId,
+		);
+		await this.ctx.storage.setAlarm(processingDeadline);
+
+		try {
+			const response = await fetch(webhookUrl, {
+				method: "POST",
+				headers: { "Content-Type": "application/json", "x-api-key": apiKey },
+				body: row.payload,
+			});
+			if (!response.ok) throw new Error(`2FA post failed with status ${response.status}`);
+			const now = new Date().toISOString();
+			this.ctx.storage.sql.exec(
+				`UPDATE twofa_deliveries
+				 SET status = 'delivered', attempts = attempts + 1, delivered_at = ?1,
+				     last_error = NULL, updated_at = ?1
+				 WHERE email_id = ?2`,
+				now,
+				emailId,
+			);
+			await this.#scheduleNextTwofaAlarm();
+			return { status: "delivered" };
+		} catch (error) {
+			await this.#recordTwofaFailure(row, error instanceof Error ? error.message : String(error));
+			return { status: "pending" };
+		}
+	}
+
+	async alarm() {
+		const due = [...this.ctx.storage.sql.exec(
+			`SELECT email_id FROM twofa_deliveries
+			 WHERE status != 'delivered' AND next_attempt_at <= ?1
+			 ORDER BY next_attempt_at ASC LIMIT 10`,
+			Date.now(),
+		)] as { email_id: string }[];
+		for (const row of due) await this.deliverTwofa(row.email_id);
+		await this.#scheduleNextTwofaAlarm();
+	}
+
+	async #recordTwofaFailure(row: TwofaDeliveryRow, error: string) {
+		const attempts = row.attempts + 1;
+		const retryDelay = Math.min(15 * 60, 30 * (2 ** Math.min(attempts - 1, 5))) * 1000;
+		const nextAttempt = Date.now() + retryDelay;
+		this.ctx.storage.sql.exec(
+			`UPDATE twofa_deliveries
+			 SET status = 'pending', attempts = ?1, next_attempt_at = ?2,
+			     last_error = ?3, updated_at = ?4
+			 WHERE email_id = ?5`,
+			attempts,
+			nextAttempt,
+			error.slice(0, 1000),
+			new Date().toISOString(),
+			row.email_id,
+		);
+		await this.ctx.storage.setAlarm(nextAttempt);
+	}
+
+	async #scheduleNextTwofaAlarm() {
+		const row = [...this.ctx.storage.sql.exec(
+			`SELECT MIN(next_attempt_at) AS next_attempt_at
+			 FROM twofa_deliveries WHERE status != 'delivered'`,
+		)][0] as { next_attempt_at: number | null } | undefined;
+		if (row?.next_attempt_at) await this.ctx.storage.setAlarm(row.next_attempt_at);
 	}
 }

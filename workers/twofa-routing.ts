@@ -23,6 +23,14 @@ const ROKU_ACTIVATION_TWOFA_TEXT_PATTERN = /^(?=[\s\S]*\bRoku \| Activate your d
 const ROKU_SIGN_IN_TWOFA_TEXT_PATTERN = /^(?=[\s\S]*\bRoku \| Signing in on [^\r\n?]{1,120}\?)(?=[\s\S]*\bAre you trying to sign in to your Roku account\?)(?=[\s\S]*\bEnter the following code to finish signing in:)(?=[\s\S]*\b\d{6}\b)/i;
 const SLACK_TWOFA_FROM_PATTERN = /^no-reply(?:-[a-z0-9]+)?@slack\.com$/i;
 const SLACK_TWOFA_TEXT_PATTERN = /(?=[\s\S]*\bSlack confirmation code:\s*[A-Z0-9-]+\b)(?=[\s\S]*\bConfirm your email address\b)/i;
+const DISNEY_TWOFA_FROM_PATTERN = /^(?:accounts@hyatus\.com|[^@\s]+@(?:[a-z0-9-]+\.)*disneyplus\.com)$/i;
+const DISNEY_TWOFA_TEXT_PATTERN = /(?=[\s\S]*\bYour one-time passcode for Disney\+)(?=[\s\S]*\bone-time passcode\b)(?=[\s\S]*\b\d{6}\b)/i;
+const STRIPE_LINK_TWOFA_FROM_PATTERN = /^(?:notifications@link\.com|accounts@hyatus\.com)$/i;
+const STRIPE_LINK_TWOFA_TEXT_PATTERN = /(?=[\s\S]*\bVerify your email\b)(?=[\s\S]*\bConfirm it(?:'|’)?s you\b)(?=[\s\S]*\bverify your email address\b)(?=[\s\S]*https:\/\/(?:app\.)?link\.com\/)/i;
+const KEYCAFE_CONFIRM_TWOFA_FROM_PATTERN = /^noreply@keycafe\.com$/i;
+const KEYCAFE_CONFIRM_TWOFA_TEXT_PATTERN = /(?=[\s\S]*\bAction Required:\s*Please Confirm Your Email Address\b)(?=[\s\S]*https:\/\/(?:www\.)?keycafe\.com\/register\/verifyRegistration\?t=)/i;
+const IGLOOHOME_TWOFA_FROM_PATTERN = /^noreply@igloohome\.co$/i;
+const IGLOOHOME_TWOFA_TEXT_PATTERN = /(?=[\s\S]*\bYour One-Time Passcode from igloohome\b)(?=[\s\S]*\bPlease enter the One-Time Passcode \(OTP\) below\b)(?=[\s\S]*\b(?:\d{6}|\d{3}\s+\d{3})\b)/i;
 const CLAUDE_LOGIN_RECIPIENT = "claude@hyatusliving.com";
 const CLAUDE_LOGIN_FROM_PATTERN = /^no-reply(?:-[a-z0-9-]+)?@(?:[a-z0-9-]+\.)*anthropic\.com$/i;
 const CLAUDE_LOGIN_TEXT_PATTERN = /(?=[\s\S]*\bSecure link to log in to Claude\.ai\b)(?=[\s\S]*\bSign in to Claude\.ai\b)(?=[\s\S]*\bclaude\.ai\/magic-link\b)/i;
@@ -72,6 +80,25 @@ export function getTwofaEmailMatch(fromAddress: string, searchText: string, _rec
 	}
 	if (SLACK_TWOFA_FROM_PATTERN.test(fromAddress) && SLACK_TWOFA_TEXT_PATTERN.test(searchText)) {
 		return { source: "slack", channel: "agentic-inbox" };
+	}
+	if (DISNEY_TWOFA_FROM_PATTERN.test(fromAddress) && DISNEY_TWOFA_TEXT_PATTERN.test(searchText)) {
+		return { source: "disney", channel: "agentic-inbox" };
+	}
+	if (STRIPE_LINK_TWOFA_FROM_PATTERN.test(fromAddress) && STRIPE_LINK_TWOFA_TEXT_PATTERN.test(searchText)) {
+		return { source: "stripe-link", channel: "agentic-inbox" };
+	}
+	if (KEYCAFE_CONFIRM_TWOFA_FROM_PATTERN.test(fromAddress) && KEYCAFE_CONFIRM_TWOFA_TEXT_PATTERN.test(searchText)) {
+		return { source: "keycafe", channel: "agentic-inbox" };
+	}
+	if (IGLOOHOME_TWOFA_FROM_PATTERN.test(fromAddress) && IGLOOHOME_TWOFA_TEXT_PATTERN.test(searchText)) {
+		return { source: "igloohome", channel: "agentic-inbox" };
+	}
+	if (
+		CLAUDE_LOGIN_FROM_PATTERN.test(fromAddress)
+		&& CLAUDE_LOGIN_TEXT_PATTERN.test(searchText)
+		&& _recipients.map((recipient) => recipient.toLowerCase()).includes(CLAUDE_LOGIN_RECIPIENT)
+	) {
+		return { source: "claude", channel: "agentic-inbox" };
 	}
 	return null;
 }
