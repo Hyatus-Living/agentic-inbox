@@ -42,3 +42,21 @@ export const attachments = sqliteTable("attachments", {
 	content_id: text("content_id"),
 	disposition: text("disposition"),
 });
+
+export const emailMessageDedup = sqliteTable("email_message_dedup", {
+	message_id: text("message_id").primaryKey(),
+	email_id: text("email_id").notNull(),
+});
+
+export const twofaDeliveries = sqliteTable("twofa_deliveries", {
+	email_id: text("email_id").primaryKey(),
+	message_id: text("message_id").notNull().unique(),
+	payload: text("payload").notNull(),
+	status: text("status").notNull().default("pending"),
+	attempts: integer("attempts").notNull().default(0),
+	next_attempt_at: integer("next_attempt_at").notNull(),
+	last_error: text("last_error"),
+	delivered_at: text("delivered_at"),
+	created_at: text("created_at").notNull(),
+	updated_at: text("updated_at").notNull(),
+});

@@ -839,7 +839,8 @@ async function extractAndStoreKeycafeStatus(
 	console.log(`Stored Keycafe status extraction for email ${emailId}: ${extraction.building_name} ${extraction.keycafe_status}`);
 }
 
-async function postTwofaEmail(env: Env, emailText: string, context: {
+function buildTwofaPayload(emailText: string, context: {
+	emailId: string;
 	messageId: string;
 	fromAddress: string;
 	toAddress: string;
@@ -848,30 +849,33 @@ async function postTwofaEmail(env: Env, emailText: string, context: {
 	source: string;
 	channel: string;
 }) {
-	if (!env.TWOFA_POST_URL) throw new Error("TWOFA_POST_URL is required for 2FA email processing");
-	if (!env.TWOFA_API_KEY) throw new Error("TWOFA_API_KEY is required for 2FA email processing");
-	const response = await fetch(env.TWOFA_POST_URL, {
-		method: "POST",
-		headers: {
-			"Content-Type": "application/json",
-			"x-api-key": env.TWOFA_API_KEY,
-		},
-		body: JSON.stringify({
-			email_body: emailText,
-			email_received_at_epoch: Math.floor(Date.now() / 1000),
-			source: context.source,
-			channel: context.channel,
-			subject: context.subject,
-			context: `Forwarded from ${context.mailboxId} 2FA email ${context.messageId}`,
-			requester_email: context.toAddress,
-			source_email_id: context.messageId,
-			source_mailbox: context.mailboxId,
-			source_recipient: context.toAddress,
-			source_from: context.fromAddress,
-			source_subject: context.subject,
-		}),
+	return JSON.stringify({
+		email_body: emailText,
+		email_received_at_epoch: Math.floor(Date.now() / 1000),
+		source: context.source,
+		channel: context.channel,
+		subject: context.subject,
+		context: `Forwarded from ${context.mailboxId} 2FA email ${context.emailId}`,
+		requester_email: context.toAddress,
+		source_email_id: context.emailId,
+		source_message_id: context.messageId,
+		source_mailbox: context.mailboxId,
+		source_recipient: context.toAddress,
+		source_from: context.fromAddress,
+		source_subject: context.subject,
 	});
-	if (!response.ok) throw new Error(`2FA post failed with status ${response.status}`);
+}
+
+async function stableMessageId(parsedMessageId: string | undefined, rawEmail: Uint8Array) {
+	if (parsedMessageId?.trim()) {
+		const match = parsedMessageId.match(/<([^>]+)>/);
+		return (match ? match[1] : parsedMessageId).trim().toLowerCase();
+	}
+	const rawBytes = new Uint8Array(rawEmail.byteLength);
+	rawBytes.set(rawEmail);
+	const digest = await crypto.subtle.digest("SHA-256", rawBytes.buffer);
+	const hex = [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
+	return `sha256:${hex}`;
 }
 
 async function postTwofaSms(env: Env, payload: {
@@ -944,6 +948,7 @@ async function receiveEmail(
 	env: Env,
 	ctx: ExecutionContext,
 	mailboxIdOverride?: string,
+	requireTwofa = false,
 ) {
 	const rawEmail = await streamToArrayBuffer(message.raw, message.rawSize);
 	const parsedEmail = await new PostalMime().parse(rawEmail);
@@ -970,11 +975,22 @@ async function receiveEmail(
 
 	const forwardingSearchText = emailSearchText(parsedEmail);
 	const fromAddress = (parsedEmail.from?.address || "").toLowerCase();
-	ctx.waitUntil(forwardMatchingContentRules(message, env, mailboxId, forwardingSearchText));
+	const twofaEmailMatch = getTwofaEmailMatch(fromAddress, forwardingSearchText, allRecipients);
+	if (requireTwofa && !twofaEmailMatch) {
+		return { matched: false, stored: false, duplicate: false };
+	}
+	if (!twofaEmailMatch) ctx.waitUntil(forwardMatchingContentRules(message, env, mailboxId, forwardingSearchText));
 	const recipientSearchText = [...allRecipients, ...ccRecipients, ...bccRecipients].join("\n");
 	const labelRule = findContentLabelRule(env, mailboxId, fromAddress, recipientSearchText, forwardingSearchText);
 	if (labelRule) console.log(`Labeling ${mailboxId} email by content rule ${labelRule.name} into folder ${labelRule.folderId}`);
-	const destinationFolder = labelRule?.folderId ?? Folders.INBOX;
+	const twofaFolderRule: ContentLabelRule | undefined = twofaEmailMatch ? {
+		name: "deterministic-twofa-route",
+		mailboxId,
+		pattern: "[\\s\\S]*",
+		folderId: "two-fa-dynamo",
+		folderName: "2FA",
+	} : undefined;
+	const destinationFolder = twofaFolderRule?.folderId ?? labelRule?.folderId ?? Folders.INBOX;
 
 	const messageId = crypto.randomUUID();
 	const mailboxKey = `mailboxes/${mailboxId}.json`;
@@ -987,14 +1003,30 @@ async function receiveEmail(
 	}
 
 	const stub = env.MAILBOX.get(env.MAILBOX.idFromName(mailboxId));
-	await ensureContentLabelFolder(stub, labelRule);
+	await ensureContentLabelFolder(stub, twofaFolderRule ?? labelRule);
+
+	const originalMessageId = await stableMessageId(parsedEmail.messageId, rawEmail);
+	const existingEmailId = await stub.getEmailByMessageId(originalMessageId);
+	if (existingEmailId) {
+		console.log(`Skipping duplicate RFC Message-ID ${originalMessageId} in ${mailboxId}`);
+		return {
+			matched: Boolean(twofaEmailMatch),
+			stored: false,
+			duplicate: true,
+			emailId: existingEmailId,
+			messageId: originalMessageId,
+		};
+	}
 
 	const attachmentData: StoredAttachment[] = [];
+	const attachmentKeys: string[] = [];
 	if (parsedEmail.attachments) {
 		for (const att of parsedEmail.attachments) {
 			const attId = crypto.randomUUID();
 			const filename = (att.filename || "untitled").replace(/[\/\\:*?"<>|\x00-\x1f]/g, "_");
-			await env.BUCKET.put(`attachments/${messageId}/${attId}/${filename}`, att.content);
+			const attachmentKey = `attachments/${messageId}/${attId}/${filename}`;
+			await env.BUCKET.put(attachmentKey, att.content);
+			attachmentKeys.push(attachmentKey);
 			attachmentData.push({ id: attId, email_id: messageId, filename, mimetype: att.mimeType,
 				size: typeof att.content === "string" ? att.content.length : att.content.byteLength,
 				content_id: att.contentId || null, disposition: att.disposition || "attachment" });
@@ -1011,10 +1043,22 @@ async function receiveEmail(
 		if (subjectThread) threadId = subjectThread;
 	}
 
-	const originalMessageId = parsedEmail.messageId ? extractMsgId(parsedEmail.messageId) : null;
 	const rawHeaders = JSON.stringify(parsedEmail.headers);
+	const twofaDelivery = twofaEmailMatch ? {
+		message_id: originalMessageId,
+		payload: buildTwofaPayload(parsedEmail.html || parsedEmail.text || forwardingSearchText, {
+			emailId: messageId,
+			messageId: originalMessageId,
+			fromAddress,
+			toAddress: allRecipients.join(", "),
+			mailboxId,
+			subject: parsedEmail.subject || "",
+			source: twofaEmailMatch.source,
+			channel: twofaEmailMatch.channel,
+		}),
+	} : undefined;
 
-	await stub.createEmail(destinationFolder, {
+	const createResult = await stub.createEmail(destinationFolder, {
 		id: messageId, subject: parsedEmail.subject || "",
 		sender: fromAddress, recipient: allRecipients.join(", "),
 		cc: ccRecipients.join(", ") || null, bcc: bccRecipients.join(", ") || null,
@@ -1022,7 +1066,23 @@ async function receiveEmail(
 		body: parsedEmail.html || parsedEmail.text || "",
 		in_reply_to: inReplyTo, email_references: emailReferences.length > 0 ? JSON.stringify(emailReferences) : null,
 		thread_id: threadId, message_id: originalMessageId, raw_headers: rawHeaders,
-	}, attachmentData);
+	}, attachmentData, twofaDelivery);
+	if (!createResult.created) {
+		if (attachmentKeys.length) await env.BUCKET.delete(attachmentKeys);
+		return {
+			matched: Boolean(twofaEmailMatch),
+			stored: false,
+			duplicate: true,
+			emailId: createResult.emailId,
+			messageId: originalMessageId,
+		};
+	}
+
+	let twofaDeliveryStatus: string | undefined;
+	if (twofaEmailMatch) {
+		const delivery = await stub.deliverTwofa(messageId);
+		twofaDeliveryStatus = delivery.status;
+	}
 
 	if (allRecipients.includes(AUTOPROCESS_RECIPIENT)) {
 		ctx.waitUntil(postAutoprocessWebhook(env, rawEmail, {
@@ -1079,24 +1139,11 @@ async function receiveEmail(
 		).catch((e) => console.error("Keycafe status extraction failed:", (e as Error).message)));
 	}
 
-	const twofaEmailMatch = getTwofaEmailMatch(fromAddress, forwardingSearchText, allRecipients);
-	if (twofaEmailMatch) {
-		ctx.waitUntil(postTwofaEmail(env, parsedEmail.html || parsedEmail.text || forwardingSearchText, {
-			messageId,
-			fromAddress,
-			toAddress: allRecipients.join(", "),
-			mailboxId,
-			subject: parsedEmail.subject || "",
-			source: twofaEmailMatch.source,
-			channel: twofaEmailMatch.channel,
-		}).catch((e) => console.error("2FA post failed:", (e as Error).message)));
-	}
-
 	const claudeLoginSmsMatch = getClaudeLoginSmsMatch(fromAddress, allRecipients, forwardingSearchText);
 	if (claudeLoginSmsMatch) {
 		ctx.waitUntil(postTwofaSms(env, {
 			...claudeLoginSmsMatch,
-			messageId,
+			messageId: originalMessageId,
 			receivedAt: new Date().toISOString(),
 		}).catch((e) => console.error("2FA SMS webhook failed:", (e as Error).message)));
 	}
@@ -1108,6 +1155,16 @@ async function receiveEmail(
 			body: JSON.stringify({ mailboxId, emailId: messageId, sender: fromAddress, subject: parsedEmail.subject || "", threadId }),
 		})).catch((e) => console.error("Auto-draft trigger failed:", (e as Error).message)));
 	}
+
+	return {
+		matched: Boolean(twofaEmailMatch),
+		stored: true,
+		duplicate: false,
+		emailId: messageId,
+		messageId: originalMessageId,
+		folderId: destinationFolder,
+		twofaDeliveryStatus,
+	};
 }
 
 export { app, receiveEmail };

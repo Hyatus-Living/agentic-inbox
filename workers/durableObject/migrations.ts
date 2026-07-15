@@ -166,6 +166,38 @@ export const mailboxMigrations: Migration[] = [
             CREATE INDEX IF NOT EXISTS idx_emails_folder_id ON emails(folder_id);
             CREATE INDEX IF NOT EXISTS idx_emails_date ON emails(date);
             CREATE INDEX IF NOT EXISTS idx_emails_folder_date ON emails(folder_id, date DESC);
-        `,
+		`,
+	},
+	{
+		name: "9_add_message_dedup_and_twofa_outbox",
+		sql: txn(`
+			CREATE TABLE email_message_dedup (
+				message_id TEXT PRIMARY KEY,
+				email_id TEXT NOT NULL
+			);
+
+			INSERT OR IGNORE INTO email_message_dedup (message_id, email_id)
+			SELECT LOWER(TRIM(message_id)), MIN(id)
+			FROM emails
+			WHERE message_id IS NOT NULL AND TRIM(message_id) != ''
+			GROUP BY LOWER(TRIM(message_id));
+
+			CREATE TABLE twofa_deliveries (
+				email_id TEXT PRIMARY KEY,
+				message_id TEXT NOT NULL UNIQUE,
+				payload TEXT NOT NULL,
+				status TEXT NOT NULL DEFAULT 'pending',
+				attempts INTEGER NOT NULL DEFAULT 0,
+				next_attempt_at INTEGER NOT NULL,
+				last_error TEXT,
+				delivered_at TEXT,
+				created_at TEXT NOT NULL,
+				updated_at TEXT NOT NULL,
+				FOREIGN KEY(email_id) REFERENCES emails(id) ON DELETE CASCADE
+			);
+
+			CREATE INDEX idx_twofa_deliveries_due
+			ON twofa_deliveries(status, next_attempt_at);
+		`),
 	},
 ];
