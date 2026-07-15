@@ -13,4 +13,5 @@ export interface Env extends Cloudflare.Env {
 	KEYCAFE_STATUS_UPDATE_URL?: string;
 	KEYCAFE_STATUS_UPDATE_API_KEY?: string;
 	TWOFA_API_KEY?: string;
+	TWOFA_SMS_WEBHOOK_KEY?: string;
 }

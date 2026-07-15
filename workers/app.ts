@@ -3,10 +3,12 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import { routeAgentRequest } from "agents";
+import { WorkerEntrypoint } from "cloudflare:workers";
 import { Hono } from "hono";
 import { jwtVerify, createRemoteJWKSet } from "jose";
 import { createRequestHandler, RouterContextProvider } from "react-router";
 import { app as apiApp, receiveEmail } from "./index";
+import { AI_MAILBOX } from "./lib/config";
 import {
 	canAccessMailbox,
 	getSuperAdminEmails,
@@ -20,6 +22,28 @@ export { MailboxDO } from "./durableObject";
 export { EmailAgent } from "./agent";
 export { EmailMCP } from "./mcp";
 export { AuthzDO } from "./lib/authz";
+
+export class EmailIngress extends WorkerEntrypoint<Env> {
+	async ingestEmail(message: { from: string; to: string; raw: ArrayBuffer }) {
+		const raw = message.raw;
+		await receiveEmail({
+			from: message.from,
+			to: message.to,
+			headers: new Headers(),
+			raw: new Response(raw).body!,
+			rawSize: raw.byteLength,
+			setReject(reason: string) {
+				throw new Error(reason);
+			},
+			async forward() {
+				throw new Error("Internally routed email cannot be forwarded again");
+			},
+			async reply() {
+				throw new Error("Internally routed email cannot be replied to during ingestion");
+			},
+		}, this.env, this.ctx, AI_MAILBOX);
+	}
+}
 
 declare module "react-router" {
 	export interface AppLoadContext {

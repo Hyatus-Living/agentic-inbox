@@ -23,6 +23,17 @@ export type ContentLabelRule = {
 	folderName?: string;
 };
 
+const STATIC_CONTENT_LABEL_RULES: ContentLabelRule[] = [
+	{
+		name: "luxer-one-parcel",
+		mailboxId: AI_MAILBOX,
+		fromPattern: "^support@luxerone\\.com$",
+		pattern: "(?=[\\s\\S]*\\bENTER ACCESS CODE\\b)(?=[\\s\\S]*\\bLuxer One package room\\b)",
+		folderId: "parcel",
+		folderName: "Parcel",
+	},
+];
+
 export function getConfiguredEmailAddresses(env: { EMAIL_ADDRESSES?: unknown }): string[] {
 	const raw = env.EMAIL_ADDRESSES;
 	if (Array.isArray(raw)) return raw.map((addr) => String(addr).toLowerCase());
@@ -123,9 +134,12 @@ export function getContentForwardRules(env: { CONTENT_FORWARD_RULES?: unknown })
 
 export function getContentLabelRules(env: { CONTENT_LABEL_RULES?: unknown }): ContentLabelRule[] {
 	const raw = env.CONTENT_LABEL_RULES;
-	if (!raw) return [];
-	if (typeof raw === "string") return JSON.parse(raw) as ContentLabelRule[];
-	return raw as ContentLabelRule[];
+	const configured = !raw
+		? []
+		: typeof raw === "string"
+			? JSON.parse(raw) as ContentLabelRule[]
+			: raw as ContentLabelRule[];
+	return [...configured, ...STATIC_CONTENT_LABEL_RULES];
 }
 
 export function isInboundOnly(env: { INBOUND_ONLY?: string }) {
