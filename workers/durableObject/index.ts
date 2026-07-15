@@ -1074,6 +1074,33 @@ export class MailboxDO extends DurableObject<Env> {
 		});
 	}
 
+	async queueTwofaDelivery(emailId: string, twofaDelivery: TwofaDeliveryData) {
+		const email = [...this.ctx.storage.sql.exec(
+			"SELECT 1 AS found FROM emails WHERE id = ?1 LIMIT 1",
+			emailId,
+		)][0];
+		if (!email) return { queued: false, status: "not_found" };
+
+		const now = new Date().toISOString();
+		this.ctx.storage.sql.exec(
+			`INSERT OR IGNORE INTO twofa_deliveries (
+				email_id, message_id, payload, status, attempts,
+				next_attempt_at, created_at, updated_at
+			) VALUES (?1, ?2, ?3, 'pending', 0, ?4, ?5, ?5)`,
+			emailId,
+			twofaDelivery.message_id,
+			twofaDelivery.payload,
+			Date.now(),
+			now,
+		);
+		const row = [...this.ctx.storage.sql.exec(
+			"SELECT status FROM twofa_deliveries WHERE email_id = ?1 LIMIT 1",
+			emailId,
+		)][0] as { status: string };
+		if (row.status !== "delivered") await this.ctx.storage.setAlarm(Date.now() + 1);
+		return { queued: true, status: row.status };
+	}
+
 	async deliverTwofa(emailId: string) {
 		const row = [...this.ctx.storage.sql.exec(
 			`SELECT email_id, message_id, payload, status, attempts, next_attempt_at

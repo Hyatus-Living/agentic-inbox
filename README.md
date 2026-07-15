@@ -205,6 +205,14 @@ curl -X POST "https://codex-inbox.hyatusliving.com/api/v1/mailboxes/ai%40hyatusl
 
 Backfill only applies deployed `CONTENT_LABEL_RULES`; callers cannot submit ad hoc regexes or arbitrary target folders.
 
+To reprocess one stored message against the deterministic 2FA matchers, move a valid match into the `2FA` folder, and queue its idempotent webhook delivery, call:
+
+```bash
+curl -X POST "https://codex-inbox.hyatusliving.com/api/v1/mailboxes/ai%40hyatusliving.com/emails/EMAIL_ID/reprocess-twofa"
+```
+
+The endpoint rejects messages that do not match a deterministic sender-and-content rule.
+
 For operational audits, use the service-token CLI instead of browser sessions:
 
 ```bash

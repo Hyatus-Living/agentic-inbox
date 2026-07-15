@@ -5,6 +5,36 @@ import test from "node:test";
 import { getClaudeLoginSmsMatch, getTwofaEmailMatch } from "../workers/twofa-routing.ts";
 import { getButterflyEmailTags } from "../workers/butterfly-routing.ts";
 
+test("Layla verification-code emails are 2FA candidates", () => {
+	const searchText = [
+		"Your verification code",
+		"Hi there!",
+		"Here’s your Layla verification code:",
+		"123456",
+		"Didn’t request this? Just ignore this email or contact us at help@layla.eco.",
+	].join("\n");
+
+	assert.deepEqual(
+		getTwofaEmailMatch("otp@layla.eco", searchText, ["accounts@hyatusliving.com"]),
+		{ source: "layla", channel: "agentic-inbox" },
+	);
+});
+
+test("ordinary Layla mail and lookalike senders do not enter 2FA", () => {
+	assert.equal(
+		getTwofaEmailMatch("news@layla.eco", "Welcome to Layla", ["accounts@hyatusliving.com"]),
+		null,
+	);
+	assert.equal(
+		getTwofaEmailMatch(
+			"attacker@example.com",
+			"Your verification code\nHere’s your Layla verification code: 123456\nhelp@layla.eco",
+			["accounts@hyatusliving.com"],
+		),
+		null,
+	);
+});
+
 test("ButterflyMX welcome links are 2FA candidates with Butterfly and unit tags", () => {
 	const searchText = [
 		"Welcome to Lore Luxury Apartments",
