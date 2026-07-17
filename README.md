@@ -83,7 +83,8 @@ npm run dev
   "codex10@hyatusliving.com",
   "claude@hyatusliving.com",
   "autoprocess@hyatusliving.com",
-  "accounts@hyatusliving.com"
+  "accounts@hyatusliving.com",
+  "lore2@hyatusliving.com"
 ],
 "EMAIL_ADDRESS_ALIASES": {
   "codex@hyatusliving.com": "ai@hyatusliving.com",
@@ -99,11 +100,12 @@ npm run dev
   "codex10@hyatusliving.com": "ai@hyatusliving.com",
   "claude@hyatusliving.com": "ai@hyatusliving.com",
   "autoprocess@hyatusliving.com": "ai@hyatusliving.com",
-  "accounts@hyatusliving.com": "ai@hyatusliving.com"
+  "accounts@hyatusliving.com": "ai@hyatusliving.com",
+  "lore2@hyatusliving.com": "ai@hyatusliving.com"
 }
 ```
 
-With this config, mail sent to `codex@hyatusliving.com`, `codex1@hyatusliving.com` through `codex10@hyatusliving.com`, `claude@hyatusliving.com`, `autoprocess@hyatusliving.com`, or `accounts@hyatusliving.com` is stored in the `ai@hyatusliving.com` mailbox while the original `To` recipient remains visible on the email record.
+With this config, mail sent to `codex@hyatusliving.com`, `codex1@hyatusliving.com` through `codex10@hyatusliving.com`, `claude@hyatusliving.com`, `autoprocess@hyatusliving.com`, `accounts@hyatusliving.com`, or `lore2@hyatusliving.com` is stored in the `ai@hyatusliving.com` mailbox. Non-2FA mail to `lore2@hyatusliving.com` is placed in the `Accounts` folder. The original `To` recipient remains visible on the email record.
 
 ### Autoprocess inbound webhook
 
@@ -122,7 +124,7 @@ npm run deploy
 npm run configure-autoprocess-routing
 ```
 
-The routing script creates or updates `autoprocess@hyatusliving.com` and `accounts@hyatusliving.com` so Cloudflare sends both to the `hyatusliving-agentic-inbox` Worker.
+The routing script creates or updates `autoprocess@hyatusliving.com`, `accounts@hyatusliving.com`, and `lore2@hyatusliving.com` so Cloudflare sends them to the `hyatusliving-agentic-inbox` Worker.
 
 ### Airbnb review removal extraction
 
@@ -197,11 +199,15 @@ Agentic Inbox stores each message in one primary folder. Inbound messages can be
 
 Each rule applies only to its `mailboxId`. `fromPattern` is optional and matches the parsed sender email address. `recipientPattern` is optional and matches the parsed `To`, `Cc`, or `Bcc` recipients. The first matching rule wins. `folderId` can be a system folder ID such as `inbox`, `archive`, `trash`, or a custom folder ID. Custom folders declared by label rules are created automatically with `folderName` when folders are listed or matching inbound mail arrives.
 
+The deployed rules keep authentication and sender-specific matches ahead of recipient catch-alls. Slack confirmation-code mail is placed in `2FA`, Slack message notifications are placed in `Marketing`, and other mail sent to `codex@hyatusliving.com` is placed in `Codex`.
+
 To apply the configured label rules to existing mail, call:
 
 ```bash
 curl -X POST "https://codex-inbox.hyatusliving.com/api/v1/mailboxes/ai%40hyatusliving.com/content-labels/backfill"
 ```
+
+Use the optional `recipient` query parameter, or `npm run inbox -- backfill-labels --recipient <address>`, to limit a backfill to one original recipient.
 
 Backfill only applies deployed `CONTENT_LABEL_RULES`; callers cannot submit ad hoc regexes or arbitrary target folders.
 

@@ -28,11 +28,31 @@ export class EmailIngress extends WorkerEntrypoint<Env> {
 		return this.#ingest(message, false);
 	}
 
+	async ingestAccountsEmail(message: { from: string; to: string; raw: ArrayBuffer }) {
+		return this.#ingest(message, false, {
+			name: "authenticated-roku-accounts",
+			mailboxId: AI_MAILBOX,
+			pattern: "[\\s\\S]*",
+			folderId: "accounts",
+			folderName: "Accounts",
+		});
+	}
+
 	async ingestAuthenticationEmail(message: { from: string; to: string; raw: ArrayBuffer }) {
 		return this.#ingest(message, true);
 	}
 
-	async #ingest(message: { from: string; to: string; raw: ArrayBuffer }, requireTwofa: boolean) {
+	async #ingest(
+		message: { from: string; to: string; raw: ArrayBuffer },
+		requireTwofa: boolean,
+		defaultFolderRule?: {
+			name: string;
+			mailboxId: string;
+			pattern: string;
+			folderId: string;
+			folderName: string;
+		},
+	) {
 		const raw = message.raw;
 		return receiveEmail({
 			from: message.from,
@@ -49,7 +69,7 @@ export class EmailIngress extends WorkerEntrypoint<Env> {
 			async reply() {
 				throw new Error("Internally routed email cannot be replied to during ingestion");
 			},
-		}, this.env, this.ctx, AI_MAILBOX, requireTwofa);
+		}, this.env, this.ctx, AI_MAILBOX, requireTwofa, defaultFolderRule);
 	}
 }
 

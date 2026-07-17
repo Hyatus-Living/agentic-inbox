@@ -10,7 +10,7 @@ function usage() {
   node scripts/agentic-inbox-cli.mjs emails [--mailbox ai@hyatusliving.com] [--folder inbox] [--all]
   node scripts/agentic-inbox-cli.mjs search <query> [--mailbox ai@hyatusliving.com] [--folder inbox] [--all]
   node scripts/agentic-inbox-cli.mjs get <email-id> [--mailbox ai@hyatusliving.com]
-  node scripts/agentic-inbox-cli.mjs backfill-labels [--mailbox ai@hyatusliving.com]
+  node scripts/agentic-inbox-cli.mjs backfill-labels [--mailbox ai@hyatusliving.com] [--recipient codex@hyatusliving.com]
 
 Required environment:
   CF_ACCESS_CLIENT_ID or AGENTIC_INBOX_ACCESS_CLIENT_ID
@@ -35,6 +35,7 @@ function parseArgs(argv) {
 		const value = rest[i];
 		if (value === "--mailbox") opts.mailbox = rest[++i];
 		else if (value === "--folder") opts.folder = rest[++i];
+		else if (value === "--recipient") opts.recipient = rest[++i];
 		else if (value === "--all") opts.all = true;
 		else opts.args.push(value);
 	}
@@ -133,7 +134,8 @@ async function main() {
 	}
 
 	if (opts.command === "backfill-labels") {
-		printJson(await request(opts, mailboxPath(opts, "/content-labels/backfill"), { method: "POST" }));
+		const query = opts.recipient ? `?recipient=${encodeURIComponent(opts.recipient)}` : "";
+		printJson(await request(opts, mailboxPath(opts, `/content-labels/backfill${query}`), { method: "POST" }));
 		return;
 	}
 

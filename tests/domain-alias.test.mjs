@@ -15,9 +15,11 @@ const env = {
 		"ai@hyatusliving.com",
 		"catch-all@hyatusliving.com",
 		"accounts@hyatusliving.com",
+		"lore2@hyatusliving.com",
 	],
 	EMAIL_ADDRESS_ALIASES: {
 		"codex1@hyatusliving.com": "ai@hyatusliving.com",
+		"lore2@hyatusliving.com": "ai@hyatusliving.com",
 	},
 };
 
@@ -51,6 +53,7 @@ test("canonical hyatusliving.com recipients are unchanged (no regression)", () =
 	// per-address alias still resolves to its canonical mailbox
 	assert.equal(resolveMailboxForRecipients(env, ["codex1@hyatusliving.com"])?.mailboxId, "ai@hyatusliving.com");
 	assert.equal(resolveMailboxForRecipients(env, ["accounts@hyatusliving.com"])?.mailboxId, "accounts@hyatusliving.com");
+	assert.equal(resolveMailboxForRecipients(env, ["lore2@hyatusliving.com"])?.mailboxId, "ai@hyatusliving.com");
 });
 
 test("a configured recipient wins even when an alias-domain recipient is also present", () => {
