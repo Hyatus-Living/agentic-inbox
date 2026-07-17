@@ -413,6 +413,19 @@ test("direct Roku activation emails to unit recipients are 2FA candidates", () =
 	);
 });
 
+test("Roku activation emails sent to lore2 are 2FA candidates", () => {
+	const searchText = [
+		"Roku | Activate your device",
+		"Activate your device to finish setting up your Roku player.",
+		"https://click.web.roku.com/CL0/https:%2F%2Fmy.roku.com%2Flink%2Fmail%2Fl2tzQ46DU/1/example",
+	].join("\n");
+
+	assert.deepEqual(
+		getTwofaEmailMatch("noreply@roku.com", searchText, ["lore2@hyatusliving.com"]),
+		{ source: "roku", channel: "agentic-inbox" },
+	);
+});
+
 test("Accounts-forwarded Roku activation emails remain 2FA candidates for any recipient", () => {
 	const searchText = [
 		"Roku | Activate your device",

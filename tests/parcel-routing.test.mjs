@@ -38,3 +38,33 @@ test("Luxer parcel mail receives the static Parcel folder rule", () => {
 		folderName: "Parcel",
 	});
 });
+
+test("Slack message notifications receive the static Marketing folder rule before the Codex fallback", () => {
+	const rules = getContentLabelRules({});
+	const marketingRule = rules.find((candidate) => candidate.name === "slack-message-notification");
+	assert.deepEqual(marketingRule, {
+		name: "slack-message-notification",
+		mailboxId: "ai@hyatusliving.com",
+		fromPattern: "^notification@slack\\.com$",
+		pattern: "[\\s\\S]*",
+		folderId: "marketing",
+		folderName: "Marketing",
+	});
+	assert.ok(
+		rules.findIndex((candidate) => candidate.name === "slack-message-notification")
+		< rules.findIndex((candidate) => candidate.name === "codex-recipient"),
+	);
+});
+
+test("codex recipient mail receives the static Codex folder rule", () => {
+	const rule = getContentLabelRules({}).find((candidate) => candidate.name === "codex-recipient");
+	assert.deepEqual(rule, {
+		name: "codex-recipient",
+		mailboxId: "ai@hyatusliving.com",
+		recipientPattern: "^codex@hyatusliving\\.com$",
+		pattern: "[\\s\\S]*",
+		flags: "i",
+		folderId: "codex",
+		folderName: "Codex",
+	});
+});

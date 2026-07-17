@@ -445,11 +445,12 @@ app.post("/api/v1/mailboxes/:mailboxId/emails/:id/forward", outboundDisabled);
 
 app.post("/api/v1/mailboxes/:mailboxId/content-labels/backfill", async (c: AppContext) => {
 	const mailboxId = c.req.param("mailboxId")!.toLowerCase();
+	const recipient = c.req.query("recipient")?.toLowerCase();
 	const rules = getContentLabelRules(c.env).filter((rule) => rule.mailboxId.toLowerCase() === mailboxId);
 	const stub = c.var.mailboxStub as unknown as {
-		backfillContentLabels: (rules: ContentLabelRule[]) => Promise<unknown>;
+		backfillContentLabels: (rules: ContentLabelRule[], recipient?: string) => Promise<unknown>;
 	};
-	return c.json(await stub.backfillContentLabels(rules));
+	return c.json(await stub.backfillContentLabels(rules, recipient));
 });
 
 // -- Folders --------------------------------------------------------
@@ -1019,6 +1020,7 @@ async function receiveEmail(
 	ctx: ExecutionContext,
 	mailboxIdOverride?: string,
 	requireTwofa = false,
+	defaultFolderRule?: ContentLabelRule,
 ) {
 	const rawEmail = await streamToArrayBuffer(message.raw, message.rawSize);
 	const parsedEmail = await new PostalMime().parse(rawEmail);
@@ -1068,7 +1070,8 @@ async function receiveEmail(
 		folderId: "two-fa-dynamo",
 		folderName: "2FA",
 	} : undefined;
-	const destinationFolder = twofaFolderRule?.folderId ?? labelRule?.folderId ?? Folders.INBOX;
+	const destinationRule = twofaFolderRule ?? defaultFolderRule ?? labelRule;
+	const destinationFolder = destinationRule?.folderId ?? Folders.INBOX;
 
 	const messageId = crypto.randomUUID();
 	const mailboxKey = `mailboxes/${mailboxId}.json`;
@@ -1081,7 +1084,7 @@ async function receiveEmail(
 	}
 
 	const stub = env.MAILBOX.get(env.MAILBOX.idFromName(mailboxId));
-	await ensureContentLabelFolder(stub, twofaFolderRule ?? labelRule);
+	await ensureContentLabelFolder(stub, destinationRule);
 
 	const originalMessageId = await stableMessageId(parsedEmail.messageId, rawEmail);
 	const existingEmailId = await stub.getEmailByMessageId(originalMessageId);

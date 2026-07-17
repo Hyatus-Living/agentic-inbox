@@ -44,7 +44,8 @@
 			"codex10@hyatusliving.com",
 			"claude@hyatusliving.com",
 			"autoprocess@hyatusliving.com",
-			"accounts@hyatusliving.com"
+			"accounts@hyatusliving.com",
+			"lore2@hyatusliving.com"
 		],
 		"EMAIL_ADDRESS_ALIASES": {
 			"codex@hyatusliving.com": "ai@hyatusliving.com",
@@ -60,7 +61,8 @@
 			"codex10@hyatusliving.com": "ai@hyatusliving.com",
 			"claude@hyatusliving.com": "ai@hyatusliving.com",
 			"autoprocess@hyatusliving.com": "ai@hyatusliving.com",
-			"accounts@hyatusliving.com": "ai@hyatusliving.com"
+			"accounts@hyatusliving.com": "ai@hyatusliving.com",
+			"lore2@hyatusliving.com": "ai@hyatusliving.com"
 		},
 		"CONTENT_FORWARD_RULES": [
 			{
@@ -99,6 +101,15 @@
 		"TWOFA_POST_URL": "https://kjc0ypdntl.execute-api.us-east-1.amazonaws.com/dev/api/twofa",
 		"TWOFA_SMS_WEBHOOK_URL": "https://twilio-theta-liart.vercel.app/api/twofa/claude-link-sms",
 		"CONTENT_LABEL_RULES": [
+			{
+				"name": "lore2-accounts",
+				"mailboxId": "ai@hyatusliving.com",
+				"recipientPattern": "^lore2@hyatusliving\\.com$",
+				"pattern": "[\\s\\S]*",
+				"flags": "i",
+				"folderId": "accounts",
+				"folderName": "Accounts"
+			},
 			{
 				"name": "autoprocess-inbound",
 				"mailboxId": "ai@hyatusliving.com",

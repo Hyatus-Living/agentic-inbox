@@ -45,6 +45,23 @@ const STATIC_CONTENT_LABEL_RULES: ContentLabelRule[] = [
 		folderId: "parcel",
 		folderName: "Parcel",
 	},
+	{
+		name: "slack-message-notification",
+		mailboxId: AI_MAILBOX,
+		fromPattern: "^notification@slack\\.com$",
+		pattern: "[\\s\\S]*",
+		folderId: "marketing",
+		folderName: "Marketing",
+	},
+	{
+		name: "codex-recipient",
+		mailboxId: AI_MAILBOX,
+		recipientPattern: "^codex@hyatusliving\\.com$",
+		pattern: "[\\s\\S]*",
+		flags: "i",
+		folderId: "codex",
+		folderName: "Codex",
+	},
 ];
 
 export function getConfiguredEmailAddresses(env: { EMAIL_ADDRESSES?: unknown }): string[] {

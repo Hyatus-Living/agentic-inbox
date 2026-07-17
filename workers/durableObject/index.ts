@@ -788,7 +788,7 @@ export class MailboxDO extends DurableObject<Env> {
 		return true;
 	}
 
-	async backfillContentLabels(rules: ContentLabelRule[]) {
+	async backfillContentLabels(rules: ContentLabelRule[], recipient?: string) {
 		const results = rules.map((rule) => ({
 			ruleName: rule.name,
 			folderId: rule.folderId,
@@ -805,8 +805,12 @@ export class MailboxDO extends DurableObject<Env> {
 			if (!created) await this.updateFolder(rule.folderId, folderName);
 		}
 
+		const query = recipient
+			? `SELECT id, subject, sender, recipient, cc, bcc, body, folder_id FROM emails WHERE lower(recipient) = ? ORDER BY date DESC`
+			: `SELECT id, subject, sender, recipient, cc, bcc, body, folder_id FROM emails ORDER BY date DESC`;
 		const rows = [...this.ctx.storage.sql.exec(
-			`SELECT id, subject, sender, recipient, cc, bcc, body, folder_id FROM emails ORDER BY date DESC`,
+			query,
+			...(recipient ? [recipient.toLowerCase()] : []),
 		)] as Array<{ id: string; subject: string; sender: string; recipient: string; cc: string | null; bcc: string | null; body: string; folder_id: string }>;
 
 		for (const row of rows) {
@@ -839,7 +843,7 @@ export class MailboxDO extends DurableObject<Env> {
 			result.moved++;
 		}
 
-		return { examined: rows.length, results };
+		return { examined: rows.length, recipient: recipient ?? null, results };
 	}
 
 	// ── Search (raw SQL — dynamic condition builder) ───────────────

@@ -14,7 +14,7 @@ done
 : "${CLOUDFLARE_ACCOUNT_TOKEN:?CLOUDFLARE_ACCOUNT_TOKEN is required}"
 : "${ZONE_ID:=8175cd86fb9021a30c0707dd2c9d03b6}"
 
-ADDRESSES=("${(@s:,:)${AGENTIC_INBOX_ROUTING_ADDRESSES:-autoprocess@hyatusliving.com,accounts@hyatusliving.com}}")
+ADDRESSES=("${(@s:,:)${AGENTIC_INBOX_ROUTING_ADDRESSES:-autoprocess@hyatusliving.com,accounts@hyatusliving.com,lore2@hyatusliving.com}}")
 WORKER_NAME="${AGENTIC_INBOX_WORKER_NAME:-${AUTOPROCESS_WORKER_NAME:-hyatusliving-agentic-inbox}}"
 
 for address in "${ADDRESSES[@]}"; do
