@@ -29,6 +29,12 @@ export interface EmailMetadata {
 	thread_id?: string | null;
 	folder_id?: string | null;
 	snippet?: string | null;
+	tags?: EmailTag[];
+}
+
+export interface EmailTag {
+	id: string;
+	name: string;
 }
 
 export interface EmailFull extends EmailMetadata {

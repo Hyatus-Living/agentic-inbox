@@ -39,6 +39,9 @@ import {
 	shouldUseOuterReviewRemovalCandidate,
 } from "./review-removal-routing";
 import { getClaudeLoginSmsMatch, getTwofaEmailMatch } from "./twofa-routing";
+import { getButterflyEmailTags } from "./butterfly-routing";
+import { getRecipientEmailTags } from "./recipient-tagging";
+import type { EmailFull } from "./lib/schemas";
 
 type AppContext = Context<MailboxContext>;
 
@@ -293,6 +296,7 @@ app.delete("/api/v1/mailboxes/:mailboxId", async (c) => {
 
 app.get("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 	const folder = c.req.query("folder");
+	const tag = c.req.query("tag");
 	const thread_id = c.req.query("thread_id");
 	const threaded = boolQuery(c, "threaded");
 	const page = intQuery(c, "page");
@@ -306,9 +310,9 @@ app.get("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 		const totalCount = await (stub as any).countThreadedEmails(folder);
 		return c.json({ emails, totalCount });
 	}
-	const emails = await stub.getEmails({ folder, thread_id, page, limit, sortColumn, sortDirection });
-	if (folder) {
-		const totalCount = await stub.countEmails({ folder, thread_id });
+	const emails = await stub.getEmails({ folder, tag, thread_id, page, limit, sortColumn, sortDirection });
+	if (folder || tag) {
+		const totalCount = await stub.countEmails({ folder, tag, thread_id });
 		return c.json({ emails, totalCount });
 	}
 	return c.json(emails);
@@ -367,6 +371,62 @@ app.post("/api/v1/mailboxes/:mailboxId/emails/:id/move", async (c: AppContext) =
 	return success ? c.json({ status: "moved" }) : c.json({ error: "Folder not found" }, 400);
 });
 
+app.post("/api/v1/mailboxes/:mailboxId/emails/:id/reprocess-twofa", async (c: AppContext) => {
+	const mailboxId = c.req.param("mailboxId")!.toLowerCase();
+	const emailId = c.req.param("id")!;
+	const stub = c.var.mailboxStub as unknown as {
+		getEmail: (id: string) => Promise<EmailFull | undefined>;
+		createFolder: (id: string, name: string) => Promise<unknown>;
+		updateFolder: (id: string, name: string) => Promise<unknown>;
+		moveEmail: (id: string, folderId: string) => Promise<boolean>;
+		queueTwofaDelivery: (id: string, delivery: { message_id: string; payload: string }) => Promise<{ queued: boolean; status: string }>;
+		deliverTwofa: (id: string) => Promise<{ status: string }>;
+	};
+	const email = await stub.getEmail(emailId);
+	if (!email) return c.json({ error: "Email not found" }, 404);
+
+	const recipients = [email.recipient, email.cc, email.bcc]
+		.filter(Boolean)
+		.flatMap((value) => value!.split(",").map((address) => address.trim().toLowerCase()))
+		.filter(Boolean);
+	const searchText = `${email.subject || ""}\n${email.body || ""}`;
+	const twofaMatch = getTwofaEmailMatch((email.sender || "").toLowerCase(), searchText, recipients);
+	if (!twofaMatch) return c.json({ error: "Email does not match a deterministic 2FA rule" }, 422);
+
+	const folderRule: ContentLabelRule = {
+		name: "deterministic-twofa-reprocess",
+		mailboxId,
+		pattern: "[\\s\\S]*",
+		folderId: "two-fa-dynamo",
+		folderName: "2FA",
+	};
+	await ensureContentLabelFolder(stub, folderRule);
+	const messageId = email.message_id?.trim().toLowerCase() || `stored:${emailId}`;
+	const queued = await stub.queueTwofaDelivery(emailId, {
+		message_id: messageId,
+		payload: buildTwofaPayload(email.body || searchText, {
+			emailId,
+			messageId,
+			fromAddress: email.sender,
+			toAddress: recipients.join(", "),
+			mailboxId,
+			subject: email.subject,
+			source: twofaMatch.source,
+			channel: twofaMatch.channel,
+			receivedAt: email.date,
+		}),
+	});
+	if (!queued.queued) return c.json({ error: "Email not found" }, 404);
+	await stub.moveEmail(emailId, folderRule.folderId);
+	const delivery = await stub.deliverTwofa(emailId);
+	return c.json({
+		status: "reprocessed",
+		source: twofaMatch.source,
+		folderId: folderRule.folderId,
+		twofaDeliveryStatus: delivery.status,
+	});
+});
+
 // -- Threads --------------------------------------------------------
 
 app.get("/api/v1/mailboxes/:mailboxId/threads/:threadId", async (c: AppContext) => {
@@ -399,6 +459,15 @@ app.get("/api/v1/mailboxes/:mailboxId/folders", async (c: AppContext) => {
 	return c.json(await c.var.mailboxStub.getFolders());
 });
 
+app.get("/api/v1/mailboxes/:mailboxId/tags", async (c: AppContext) => {
+	return c.json(await (c.var.mailboxStub as any).getTags());
+});
+
+app.post("/api/v1/mailboxes/:mailboxId/recipient-tags/backfill", async (c: AppContext) => {
+	const mailboxId = c.req.param("mailboxId")!.toLowerCase();
+	return c.json(await (c.var.mailboxStub as any).backfillRecipientTags(mailboxId));
+});
+
 app.post("/api/v1/mailboxes/:mailboxId/folders", async (c: AppContext) => {
 	const denied = await requireSuperAdmin(c);
 	if (denied) return denied;
@@ -428,7 +497,7 @@ app.delete("/api/v1/mailboxes/:mailboxId/folders/:id", async (c: AppContext) => 
 
 app.get("/api/v1/mailboxes/:mailboxId/search", async (c: AppContext) => {
 	const searchOpts: Record<string, unknown> = {
-		query: c.req.query("query") || "", folder: c.req.query("folder"), from: c.req.query("from"),
+		query: c.req.query("query") || "", folder: c.req.query("folder"), tag: c.req.query("tag"), from: c.req.query("from"),
 		to: c.req.query("to"), subject: c.req.query("subject"), date_start: c.req.query("date_start"),
 		date_end: c.req.query("date_end"), is_read: boolQuery(c, "is_read"),
 		is_starred: boolQuery(c, "is_starred"), has_attachment: boolQuery(c, "has_attachment"),
@@ -848,10 +917,11 @@ function buildTwofaPayload(emailText: string, context: {
 	subject: string;
 	source: string;
 	channel: string;
+	receivedAt?: string;
 }) {
 	return JSON.stringify({
 		email_body: emailText,
-		email_received_at_epoch: Math.floor(Date.now() / 1000),
+		email_received_at_epoch: Math.floor(new Date(context.receivedAt || Date.now()).getTime() / 1000),
 		source: context.source,
 		channel: context.channel,
 		subject: context.subject,
@@ -976,6 +1046,14 @@ async function receiveEmail(
 	const forwardingSearchText = emailSearchText(parsedEmail);
 	const fromAddress = (parsedEmail.from?.address || "").toLowerCase();
 	const twofaEmailMatch = getTwofaEmailMatch(fromAddress, forwardingSearchText, allRecipients);
+	const tags = [...new Set([
+		...getRecipientEmailTags(mailboxId, allRecipients),
+		...getButterflyEmailTags(
+			fromAddress,
+			allRecipients,
+			twofaEmailMatch?.source === "butterflymx",
+		),
+	])];
 	if (requireTwofa && !twofaEmailMatch) {
 		return { matched: false, stored: false, duplicate: false };
 	}
@@ -1066,6 +1144,7 @@ async function receiveEmail(
 		body: parsedEmail.html || parsedEmail.text || "",
 		in_reply_to: inReplyTo, email_references: emailReferences.length > 0 ? JSON.stringify(emailReferences) : null,
 		thread_id: threadId, message_id: originalMessageId, raw_headers: rawHeaders,
+		tags,
 	}, attachmentData, twofaDelivery);
 	if (!createResult.created) {
 		if (attachmentKeys.length) await env.BUCKET.delete(attachmentKeys);
@@ -1163,6 +1242,7 @@ async function receiveEmail(
 		emailId: messageId,
 		messageId: originalMessageId,
 		folderId: destinationFolder,
+		tags,
 		twofaDeliveryStatus,
 	};
 }

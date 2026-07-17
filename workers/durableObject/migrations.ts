@@ -200,4 +200,24 @@ export const mailboxMigrations: Migration[] = [
 			ON twofa_deliveries(status, next_attempt_at);
 		`),
 	},
+	{
+		name: "10_add_email_tags",
+		sql: txn(`
+			CREATE TABLE tags (
+				id TEXT PRIMARY KEY,
+				name TEXT NOT NULL UNIQUE
+			);
+
+			CREATE TABLE email_tags (
+				email_id TEXT NOT NULL,
+				tag_id TEXT NOT NULL,
+				PRIMARY KEY (email_id, tag_id),
+				FOREIGN KEY(email_id) REFERENCES emails(id) ON DELETE CASCADE,
+				FOREIGN KEY(tag_id) REFERENCES tags(id) ON DELETE CASCADE
+			);
+
+			CREATE INDEX idx_email_tags_tag_id ON email_tags(tag_id, email_id);
+			INSERT INTO tags (id, name) VALUES ('butterfly', 'Butterfly');
+		`),
+	},
 ];

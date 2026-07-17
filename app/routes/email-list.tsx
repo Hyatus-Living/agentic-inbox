@@ -21,6 +21,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router";
 import { Folders } from "shared/folders";
 import { formatListDate } from "shared/dates";
+import EmailTags from "~/components/EmailTags";
 import MailboxSplitView from "~/components/MailboxSplitView";
 import { getSnippetText } from "~/lib/utils";
 import {
@@ -30,6 +31,7 @@ import {
 	useUpdateEmail,
 } from "~/queries/emails";
 import { useFolders } from "~/queries/folders";
+import { useTags } from "~/queries/tags";
 import { queryKeys } from "~/queries/keys";
 import { useUIStore } from "~/hooks/useUIStore";
 import api from "~/services/api";
@@ -139,9 +141,10 @@ function FolderEmptyState({
 }
 
 export default function EmailListRoute() {
-	const { mailboxId, folder } = useParams<{
+	const { mailboxId, folder, tagId } = useParams<{
 		mailboxId: string;
 		folder: string;
+		tagId: string;
 	}>();
 	const {
 		selectedEmailId,
@@ -163,11 +166,11 @@ export default function EmailListRoute() {
 
 	const params = useMemo(
 		() => ({
-			folder: folder || "",
+			...(tagId ? { tag: tagId } : { folder: folder || "" }),
 			page: String(page),
 			limit: String(PAGE_SIZE),
 		}),
-		[folder, page],
+		[folder, tagId, page],
 	);
 
 	const {
@@ -179,12 +182,14 @@ export default function EmailListRoute() {
 	const totalCount = emailData?.totalCount ?? 0;
 
 	const { data: folders = [] } = useFolders(mailboxId);
+	const { data: tags = [] } = useTags(mailboxId);
 
 	const folderName = useMemo(() => {
+		if (tagId) return tags.find((tag) => tag.id === tagId)?.name ?? tagId;
 		const found = folders.find((f) => f.id === folder);
 		if (found) return found.name;
 		return folder ? folder.charAt(0).toUpperCase() + folder.slice(1) : "Inbox";
-	}, [folders, folder]);
+	}, [folders, tags, folder, tagId]);
 
 	const isPanelOpen = selectedEmailId !== null || isComposing;
 
@@ -192,14 +197,14 @@ export default function EmailListRoute() {
 	const prevFolderRef = useRef<string | undefined>(undefined);
 
 	useEffect(() => {
-		const folderChanged = prevFolderRef.current !== `${mailboxId}/${folder}`;
-		prevFolderRef.current = `${mailboxId}/${folder}`;
+		const folderChanged = prevFolderRef.current !== `${mailboxId}/${folder ?? `tag:${tagId}`}`;
+		prevFolderRef.current = `${mailboxId}/${folder ?? `tag:${tagId}`}`;
 
 		if (folderChanged) {
 			closePanel();
 			setPage(1);
 		}
-	}, [mailboxId, folder, closePanel]);
+	}, [mailboxId, folder, tagId, closePanel]);
 
 	const toggleStar = (e: React.MouseEvent, email: Email) => {
 		e.preventDefault();
@@ -228,6 +233,9 @@ export default function EmailListRoute() {
 			queryClient.invalidateQueries({ queryKey: ["emails", mailboxId] });
 			queryClient.invalidateQueries({
 				queryKey: queryKeys.folders.list(mailboxId),
+			});
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.tags.list(mailboxId),
 			});
 		}
 	};
@@ -369,6 +377,7 @@ export default function EmailListRoute() {
 												>
 													{formatParticipants(email)}
 												</span>
+												<EmailTags tags={email.tags} />
 												{(email.thread_count ?? 1) > 1 && (
 													<span className="shrink-0 text-xs text-kumo-subtle bg-kumo-fill rounded-full px-1.5 py-0.5 font-medium">
 														{email.thread_count}

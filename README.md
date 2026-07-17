@@ -178,7 +178,7 @@ Each rule applies only to its `mailboxId`. `forwardTo` must be a verified Cloudf
 
 ### Content label rules
 
-Agentic Inbox stores mail in folders rather than separate Gmail-style labels. Inbound messages can be placed into a folder when their recipient, subject, text body, or HTML body matches a JavaScript regular expression. Configure rules in `wrangler.jsonc` under `CONTENT_LABEL_RULES`:
+Agentic Inbox stores each message in one primary folder. Inbound messages can be placed into a folder when their recipient, subject, text body, or HTML body matches a JavaScript regular expression. Configure rules in `wrangler.jsonc` under `CONTENT_LABEL_RULES`:
 
 ```jsonc
 "CONTENT_LABEL_RULES": [
@@ -205,6 +205,14 @@ curl -X POST "https://codex-inbox.hyatusliving.com/api/v1/mailboxes/ai%40hyatusl
 
 Backfill only applies deployed `CONTENT_LABEL_RULES`; callers cannot submit ad hoc regexes or arbitrary target folders.
 
+To reprocess one stored message against the deterministic 2FA matchers, move a valid match into the `2FA` folder, and queue its idempotent webhook delivery, call:
+
+```bash
+curl -X POST "https://codex-inbox.hyatusliving.com/api/v1/mailboxes/ai%40hyatusliving.com/emails/EMAIL_ID/reprocess-twofa"
+```
+
+The endpoint rejects messages that do not match a deterministic sender-and-content rule.
+
 For operational audits, use the service-token CLI instead of browser sessions:
 
 ```bash
@@ -219,6 +227,24 @@ npm run inbox:backfill-labels
 ```
 
 The CLI calls the production `/api/v1/mailboxes/:mailboxId/*` API with Cloudflare Access service-token headers and handles API pagination. Read/list/search work with a granted `service_agent` token. Arbitrary email moves still require super-admin authorization; use deployed `CONTENT_LABEL_RULES` plus `inbox:backfill-labels` for safe bulk relabeling.
+
+### Message tags
+
+Messages can also carry multiple tags independently of their primary folder. Tags appear as badges on messages and as filterable links in the mailbox sidebar. ButterflyMX routing uses this model:
+
+- Mail routed into a mailbox through another Hyatus `To` address receives a readable recipient tag. Plus-address variants are grouped under the base address, such as `accounts+vendor@hyatus.com` under `Accounts` and `purchases+team@hyatus.com` under `Purchases`.
+- Direct mail to the canonical mailbox address is not redundantly tagged. Unit-style addresses remain reserved for service-specific rules, so ordinary ButterflyMX notifications do not receive a unit tag.
+
+- Every ButterflyMX email receives the `Butterfly` tag.
+- Activation emails with a direct `accounts.butterflymx.com/confirmations/...` link also receive the uppercase unit internal-name tag extracted from the `@hyatusliving.com` recipient.
+- Activation emails remain in the `2FA` folder and are posted through `TWOFA_POST_URL`.
+- Other ButterflyMX notifications remain in `Inbox` and are not posted to 2FA.
+
+To attach recipient tags to existing messages without changing their folders or triggering 2FA delivery, call:
+
+```bash
+curl -X POST "https://codex-inbox.hyatusliving.com/api/v1/mailboxes/ai%40hyatusliving.com/recipient-tags/backfill"
+```
 
 ### Deploy
 

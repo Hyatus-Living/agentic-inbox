@@ -31,6 +31,20 @@ export const emails = sqliteTable("emails", {
 	raw_headers: text("raw_headers"),
 });
 
+export const tags = sqliteTable("tags", {
+	id: text("id").primaryKey(),
+	name: text("name").notNull().unique(),
+});
+
+export const emailTags = sqliteTable("email_tags", {
+	email_id: text("email_id")
+		.notNull()
+		.references(() => emails.id, { onDelete: "cascade" }),
+	tag_id: text("tag_id")
+		.notNull()
+		.references(() => tags.id, { onDelete: "cascade" }),
+});
+
 export const attachments = sqliteTable("attachments", {
 	id: text("id").primaryKey(),
 	email_id: text("email_id")
